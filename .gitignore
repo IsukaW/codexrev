@@ -1,0 +1,52 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Build output
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# Test coverage
+coverage/
+*.lcov
+
+# Environment
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Codexrev runtime
+.codexrev/
+.cox-sandbox/
+*.checkpoint
+.gemini-style/
+
+# Telemetry/cache
+.cache/
+.turbo/
+
+# Misc
+*.pid
+*.seed
+*.pid.lock
