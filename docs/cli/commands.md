@@ -7,6 +7,7 @@ This page documents every command and flag exposed by `codexrev`.
 ```text
 codexrev [prompt]
 
+codexrev init                         # Initialize this project with an encrypted config
 codexrev extensions list              # List installed extensions
 codexrev extensions install <dir>     # Install from a local directory
 codexrev extensions uninstall <name>  # Remove an installed extension
@@ -32,6 +33,32 @@ If `prompt` is omitted and no subcommand is given, Codexrev launches the interac
 | `--version` |  | `boolean` |  | Print the version and exit. |
 
 ## Subcommands
+
+### `codexrev init`
+
+Initialize the current project with an encrypted `.codexrev/config.json`. This is required once per project before `codexrev` can use a per-project API key.
+
+```bash
+codexrev init                          # interactive TUI wizard
+codexrev init --reset                  # replace an existing config
+codexrev init --non-interactive \
+  --provider openai \
+  --model gpt-4o-mini \
+  --api-key "$OPENAI_API_KEY"          # CI / scripting
+```
+
+| Flag | Description |
+| --- | --- |
+| `--provider` | `openai` \| `anthropic` \| `google` \| `litellm` |
+| `--model` | Model name (e.g. `gpt-4o`, `claude-3-5-sonnet-20241022`) |
+| `--api-key` | Provider API key (passed only in non-interactive mode) |
+| `--base-url` | Provider base URL (optional, e.g. for litellm) |
+| `--reset` | Delete the existing config + DEK before writing the new one |
+| `--non-interactive` | Skip the TUI wizard (requires `--provider`, `--model`, `--api-key`) |
+
+The API key is encrypted with **AES-256-GCM**. The 256-bit DEK is stored in the OS keychain (Windows Credential Manager / macOS Keychain / Linux libsecret) under service `codexrev`. If the OS keychain is unavailable, `init` refuses to run rather than falling back to plaintext.
+
+Recovery: if the DEK is lost (e.g. a different OS user or a fresh machine), run `codexrev init --reset` in the project directory.
 
 ### `codexrev extensions`
 

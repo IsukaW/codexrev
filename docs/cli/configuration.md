@@ -1,11 +1,12 @@
 # Configuration
 
-Codexrev reads settings from four places, in order of precedence (highest wins):
+Codexrev reads settings from five places, in order of precedence (highest wins):
 
 1. **CLI flags** (transient, this invocation only)
 2. **Environment variables** (`CODEXREV_*`)
-3. **Project config** (`.codexrev/settings.json` at or above cwd)
-4. **User config** (`~/.codexrev/settings.json`)
+3. **Project encrypted config** (`.codexrev/config.json` at cwd) — created by `codexrev init`
+4. **Project settings** (`.codexrev/settings.json` at or above cwd, optional override)
+5. **User config** (`~/.codexrev/settings.json`)
 
 The shipped defaults fill in any gaps.
 
@@ -50,7 +51,34 @@ Anything you put in `~/.codexrev/.env` is also loaded (thanks to `dotenv`).
 
 ## Project config
 
-Codexrev looks for `.codexrev/settings.json` starting at cwd and walking up to the filesystem root. This lets a repo ship its own MCP servers and pinned model without polluting your global settings.
+### Encrypted config (`.codexrev/config.json`)
+
+For per-project API keys, run `codexrev init` once in your project root. It writes `./.codexrev/config.json` containing:
+
+```jsonc
+{
+  "schemaVersion": 1,
+  "provider": "openai",
+  "model": "gpt-4o",
+  "apiKey": {
+    "iv": "MkHv/p0bwoUTUoVj",        // base64, random per write
+    "tag": "xNqXTAWdJfieVHSI4mpnqA==", // GCM auth tag
+    "ciphertext": "1sI7Tfy30lNf+Mxw7w==" // AES-256-GCM ciphertext
+  },
+  "createdAt": "2026-07-13T05:24:51.579Z",
+  "updatedAt": "2026-07-13T05:24:51.579Z"
+}
+```
+
+The corresponding 256-bit DEK is stored in the **OS keychain** under service `codexrev` and account `<username>:<sha256(cwd)[..32]>`. On disk the file is `0600`, the directory is `0700` (POSIX). The plaintext API key is never written to disk and never logged.
+
+If the OS keychain is unavailable on Linux, install `libsecret-1-0` (`sudo apt install libsecret-1-0`). The CLI will refuse to start `init` if the keychain is unreachable — it never silently falls back to plaintext.
+
+If you migrate to a new machine or your DEK is lost, run `codexrev init --reset` to re-seal.
+
+### Legacy project settings (`.codexrev/settings.json`)
+
+Codexrev also still reads `.codexrev/settings.json` starting at cwd and walking up to the filesystem root, for projects that ship MCP servers or a pinned model without committing secrets. This file cannot hold encrypted secrets — use `config.json` for those.
 
 ## Sandboxing
 

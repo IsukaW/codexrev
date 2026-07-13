@@ -13,11 +13,14 @@ import { logger } from '../utils/logger.js';
 import { ensureCodexrevHome, getCodexrevPaths } from '../utils/paths.js';
 import { runTui } from './tui.js';
 import { runNonInteractive } from './nonInteractive.js';
+import { runInit } from './init.js';
+import { renderHelp, renderVersion } from './help.js';
 import {
   installExtension,
   loadExtensions,
   uninstallExtension,
 } from '../extensions/loader.js';
+import { projectConfigPath } from '../config/projectConfig.js';
 
 interface CliArgs {
   provider?: string;
@@ -30,6 +33,8 @@ interface CliArgs {
   'output-format'?: 'text' | 'json' | 'stream-json';
   'approval-mode'?: 'always' | 'on-request' | 'never';
   debug?: boolean;
+  help?: boolean;
+  version?: boolean;
   /** Subcommand routing — populated by `parse()`. */
   _: Array<string | number>;
   /** Free-form positional after the subcommand. */
@@ -85,6 +90,31 @@ async function main(): Promise<void> {
   const argv = (await yargs(hideBin(process.argv))
     .scriptName('codexrev')
     .usage('$0 [prompt]\n\nCodexrev — multi-provider, agentic command-line AI assistant.')
+    .fail((msg, err) => {
+      if (err) throw err;
+      process.stderr.write(`\n[codexrev] ${msg}\n\nFor usage, run: codexrev --help\n\n`);
+      process.exit(2);
+    })
+    .command(
+      'init',
+      'Initialize this project with an encrypted .codexrev/config.json',
+      (y) =>
+        y
+          .option('provider', {
+            type: 'string',
+            choices: ['openai', 'anthropic', 'google', 'litellm'] as const,
+            describe: 'LLM provider',
+          })
+          .option('model', { type: 'string', describe: 'Model name (provider-specific)' })
+          .option('api-key', { type: 'string', describe: 'Provider API key' })
+          .option('base-url', { type: 'string', describe: 'Provider base URL (optional)' })
+          .option('reset', { type: 'boolean', default: false, describe: 'Replace existing config' })
+          .option('non-interactive', {
+            type: 'boolean',
+            default: false,
+            describe: 'Skip the TUI wizard (requires --provider, --model, --api-key)',
+          }),
+    )
     .command('extensions', 'Manage installed extensions', (y) =>
       y
         .command('list', 'List installed extensions')
@@ -125,16 +155,48 @@ async function main(): Promise<void> {
       describe: 'How to handle tool execution approval',
     })
     .option('debug', { type: 'boolean', describe: 'Enable debug logging' })
-    .help('h')
-    .alias('h', 'help')
-    .version('0.1.0')
+    .help(false)
+    .version(false)
+    .exitProcess(false)
     .parseAsync()) as unknown as CliArgs;
+
+  if (argv.help || hideBin(process.argv).includes('-h')) {
+    renderHelp();
+    return;
+  }
+  if (argv.version || hideBin(process.argv).includes('-v')) {
+    renderVersion();
+    return;
+  }
 
   if (argv.debug) {
     process.env.CODEXREV_LOG_LEVEL = 'debug';
   }
 
   // Route subcommands first.
+  if (argv._.includes('init')) {
+    const flags = argv as unknown as {
+      provider?: string;
+      model?: string;
+      apiKey?: string;
+      apiKeyRaw?: string;
+      baseUrl?: string;
+      reset?: boolean;
+      nonInteractive?: boolean;
+    };
+    // yargs converts --api-key → apiKey, --base-url → baseUrl
+    await runInit({
+      cwd: process.cwd(),
+      provider: flags.provider,
+      model: flags.model,
+      apiKey: flags.apiKey ?? (argv as Record<string, unknown>)['api-key'] as string | undefined,
+      baseUrl: flags.baseUrl ?? (argv as Record<string, unknown>)['base-url'] as string | undefined,
+      reset: !!flags.reset,
+      nonInteractive: !!flags.nonInteractive || !process.stdout.isTTY,
+    });
+    return;
+  }
+
   if (argv._.includes('extensions')) {
     const rest = argv._.slice(argv._.indexOf('extensions') + 1);
     await handleExtensionsSubcommand(rest);
@@ -143,6 +205,27 @@ async function main(): Promise<void> {
 
   const settings = await loadSettings();
   logger.debug('settings loaded', { provider: settings.provider, model: settings.model });
+
+  // Friendly nudge: no project config and no API key resolved anywhere.
+  const hasResolvedKey =
+    !!settings.providers[settings.provider]?.apiKey ||
+    !!process.env.OPENAI_API_KEY ||
+    !!process.env.ANTHROPIC_API_KEY ||
+    !!process.env.GOOGLE_API_KEY;
+  const hasProjectConfig = await (async () => {
+    try {
+      const { existsSync } = await import('node:fs');
+      return existsSync(projectConfigPath(process.cwd()));
+    } catch {
+      return false;
+    }
+  })();
+  if (!hasResolvedKey && !hasProjectConfig) {
+    process.stderr.write(
+      `\n[codexrev] No project config at .codexrev/config.json and no API key in env.\n` +
+        `           Run \`codexrev init\` to set up this project.\n\n`,
+    );
+  }
 
   const extensions = await loadExtensions({ verbose: !!argv.debug });
   if (extensions.extensions.length > 0) {

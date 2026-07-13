@@ -30,13 +30,11 @@ const fakeStore: Map<string, string> = new Map();
 function loadKeytar(): typeof import('keytar') | null {
   if (keytarLoadAttempted) return keytarModule;
   keytarLoadAttempted = true;
-  if (process.env.CODEXREV_TEST_FAKE_KEYCHAIN === '1') {
+  if (isFakeMode()) {
     keytarModule = null;
     return null;
   }
   try {
-    // `keytar` is a native module; required lazily so unit tests that
-    // set the fake env var never touch it.
     keytarModule = require_keytar();
   } catch (err) {
     keytarLoadError = err as Error;
@@ -45,26 +43,23 @@ function loadKeytar(): typeof import('keytar') | null {
   return keytarModule;
 }
 
-/**
- * `keytar` is a CommonJS native module. We use a runtime indirection so
- * esbuild can keep `keytar` external without us having to add a
- * CJS-only dependency from a TS source file.
- */
 function require_keytar(): typeof import('keytar') {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   return require('keytar') as typeof import('keytar');
 }
 
+export function isFakeMode(): boolean {
+  return process.env.CODEXREV_TEST_FAKE_KEYCHAIN === '1';
+}
+
 export function isAvailable(): boolean {
-  if (process.env.CODEXREV_TEST_FAKE_KEYCHAIN === '1') return true;
-  const m = loadKeytar();
-  if (m) return true;
-  return false;
+  if (isFakeMode()) return true;
+  return loadKeytar() !== null;
 }
 
 export function unavailableReason(): string {
   if (isAvailable()) return 'available';
-  if (process.env.CODEXREV_TEST_FAKE_KEYCHAIN === '1') return 'fake-mode-active';
+  if (isFakeMode()) return 'fake-mode-active';
   if (keytarLoadError) {
     return `keytar failed to load: ${keytarLoadError.message}. On Linux, install libsecret-1-0 (e.g. apt install libsecret-1-0).`;
   }
@@ -84,53 +79,43 @@ function ensureAvailable(): void {
   }
 }
 
-export function getDek(projectRoot: string): Buffer | null {
+export async function getDek(projectRoot: string): Promise<Buffer | null> {
   ensureAvailable();
-  if (process.env.CODEXREV_TEST_FAKE_KEYCHAIN === '1') {
-    const v = fakeStore.get(projectKeychainKey(projectRoot));
+  const account = projectKeychainKey(projectRoot);
+  if (isFakeMode()) {
+    const v = fakeStore.get(account);
     return v ? Buffer.from(v, 'base64') : null;
   }
   const m = loadKeytar();
   if (!m) throw new SecretsError(`OS keychain is unavailable: ${unavailableReason()}`);
-  return m.getPassword(KEYCHAIN_SERVICE, projectKeychainKey(projectRoot)).then((v) =>
-    v ? Buffer.from(v, 'base64') : null,
-  ) as unknown as Buffer | null;
-}
-
-export async function getDekAsync(projectRoot: string): Promise<Buffer | null> {
-  ensureAvailable();
-  if (process.env.CODEXREV_TEST_FAKE_KEYCHAIN === '1') {
-    const v = fakeStore.get(projectKeychainKey(projectRoot));
-    return v ? Buffer.from(v, 'base64') : null;
-  }
-  const m = loadKeytar();
-  if (!m) throw new SecretsError(`OS keychain is unavailable: ${unavailableReason()}`);
-  const v = await m.getPassword(KEYCHAIN_SERVICE, projectKeychainKey(projectRoot));
+  const v = await m.getPassword(KEYCHAIN_SERVICE, account);
   return v ? Buffer.from(v, 'base64') : null;
 }
 
-export function setDek(projectRoot: string, dek: Buffer): Promise<void> {
+export async function setDek(projectRoot: string, dek: Buffer): Promise<void> {
   ensureAvailable();
-  if (process.env.CODEXREV_TEST_FAKE_KEYCHAIN === '1') {
-    fakeStore.set(projectKeychainKey(projectRoot), dek.toString('base64'));
-    return Promise.resolve();
+  const account = projectKeychainKey(projectRoot);
+  if (isFakeMode()) {
+    fakeStore.set(account, dek.toString('base64'));
+    return;
   }
   const m = loadKeytar();
   if (!m) throw new SecretsError(`OS keychain is unavailable: ${unavailableReason()}`);
-  return m.setPassword(KEYCHAIN_SERVICE, projectKeychainKey(projectRoot), dek.toString('base64'));
+  await m.setPassword(KEYCHAIN_SERVICE, account, dek.toString('base64'));
 }
 
-export function deleteDek(projectRoot: string): Promise<boolean> {
+export async function deleteDek(projectRoot: string): Promise<boolean> {
   ensureAvailable();
-  if (process.env.CODEXREV_TEST_FAKE_KEYCHAIN === '1') {
-    return Promise.resolve(fakeStore.delete(projectKeychainKey(projectRoot)));
+  const account = projectKeychainKey(projectRoot);
+  if (isFakeMode()) {
+    return fakeStore.delete(account);
   }
   const m = loadKeytar();
   if (!m) throw new SecretsError(`OS keychain is unavailable: ${unavailableReason()}`);
-  return m.deletePassword(KEYCHAIN_SERVICE, projectKeychainKey(projectRoot));
+  return m.deletePassword(KEYCHAIN_SERVICE, account);
 }
 
-/** Test-only: clear the in-memory fake. Not exported via the public API surface. */
+/** Test-only: clear the in-memory fake. Not part of the public API surface. */
 export function _resetFakeStore(): void {
   fakeStore.clear();
 }

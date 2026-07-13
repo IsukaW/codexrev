@@ -39,6 +39,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
+    "postinstall": "node scripts/postinstall.js",
     "prepare": "npm run build"
   },
   "keywords": [
@@ -56,6 +57,14 @@
   ],
   "author": "Codexrev Contributors",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/codexrev/codexrev.git"
+  },
+  "bugs": {
+    "url": "https://github.com/codexrev/codexrev/issues"
+  },
+  "homepage": "https://github.com/codexrev/codexrev#readme",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.0",
     "@google/genai": "^0.7.0",

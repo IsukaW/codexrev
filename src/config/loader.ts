@@ -16,6 +16,9 @@ import { findProjectConfig, getCodexrevPaths } from '../utils/paths.js';
 import { ENV } from '../utils/env.js';
 import { ConfigError } from '../utils/errors.js';
 import type { ProviderId } from '../core/types.js';
+import { decrypt } from '../security/secrets.js';
+import { getDek, isAvailable as keychainAvailable } from '../security/keychain.js';
+import { loadProjectConfig, projectConfigPath } from './projectConfig.js';
 
 const VALID_PROVIDERS: ReadonlyArray<ProviderId> = ['openai', 'anthropic', 'google', 'litellm'];
 
@@ -117,7 +120,7 @@ export async function loadSettings(cwd: string = process.cwd()): Promise<Setting
     merged = deepMerge(merged, userRaw as Partial<Settings>);
   }
 
-  // 2) project-level settings
+  // 2) project-level settings (legacy .codexrev/settings.json)
   const projectPath = await findProjectConfig(cwd);
   if (projectPath) {
     const projRaw = await readJsonFile(projectPath);
@@ -125,6 +128,9 @@ export async function loadSettings(cwd: string = process.cwd()): Promise<Setting
       merged = deepMerge(merged, projRaw as Partial<Settings>);
     }
   }
+
+  // 2b) project-level encrypted config (.codexrev/config.json) — overrides 2a
+  merged = await mergeProjectConfig(merged, cwd);
 
   // 3) env overrides
   merged = applyEnvOverrides(merged);
@@ -139,6 +145,59 @@ export async function loadSettings(cwd: string = process.cwd()): Promise<Setting
   validateMcpServers(merged.mcpServers);
 
   return merged;
+}
+
+/**
+ * Merge in the project's encrypted `config.json`, if present. The API
+ * key is decrypted using the project-scoped DEK from the OS keychain.
+ */
+async function mergeProjectConfig(merged: Settings, cwd: string): Promise<Settings> {
+  const projectCfg = await loadProjectConfig(cwd);
+  if (!projectCfg) return merged;
+
+  if (!keychainAvailable()) {
+    throw new ConfigError(
+      `project config found at ${projectConfigPath(cwd)} but OS keychain is unavailable. ` +
+        `Install libsecret-1-0 on Linux, then re-run \`codexrev init --reset\`.`,
+    );
+  }
+
+  const dek = await getDek(cwd);
+  if (!dek) {
+    throw new ConfigError(
+      `project config found at ${projectConfigPath(cwd)} but no matching DEK in OS keychain. ` +
+        `Re-run \`codexrev init --reset\` for this project to re-seal the API key.`,
+    );
+  }
+
+  let apiKey: string;
+  try {
+    apiKey = decrypt(projectCfg.apiKey, dek);
+  } catch (err) {
+    throw new ConfigError(
+      `failed to decrypt API key in ${projectConfigPath(cwd)}: ${(err as Error).message}. ` +
+        `Run \`codexrev init --reset\` to re-seal.`,
+    );
+  }
+
+  const providers = { ...merged.providers };
+  providers[projectCfg.provider] = {
+    ...(providers[projectCfg.provider] ?? { provider: projectCfg.provider, model: projectCfg.model }),
+    provider: projectCfg.provider,
+    model: projectCfg.model,
+    apiKey,
+    ...(projectCfg.baseUrl !== undefined ? { baseUrl: projectCfg.baseUrl } : {}),
+    ...(projectCfg.maxOutputTokens !== undefined ? { maxOutputTokens: projectCfg.maxOutputTokens } : {}),
+    ...(projectCfg.temperature !== undefined ? { temperature: projectCfg.temperature } : {}),
+    ...(projectCfg.topP !== undefined ? { topP: projectCfg.topP } : {}),
+  };
+
+  return {
+    ...merged,
+    provider: projectCfg.provider,
+    model: projectCfg.model,
+    providers,
+  };
 }
 
 /** Save the user's settings file. Creates parent directories as needed. */
