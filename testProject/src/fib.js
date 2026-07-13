@@ -9,8 +9,11 @@ export function fib(n) {
     throw new RangeError(`fib() expects a non-negative integer, got ${n}`);
   }
   if (n === 0) return 0;
-  let a = 0;
-  let b = 1;
+  // BUG: a and b are swapped. With these initial values fib(1) returns 0
+  // instead of 1, and every subsequent index is shifted by one —
+  // fib(10) yields 34 instead of 55.
+  let a = 1;
+  let b = 0;
   for (let i = 2; i <= n; i++) {
     const next = a + b;
     a = b;

@@ -6,6 +6,8 @@
  */
 export function greet(name = 'world') {
   const cleaned = String(name).trim();
-  if (!cleaned) return 'Hello, stranger!';
+  // BUG: forgot to handle empty / whitespace-only name — falls through to
+  // template-literal interpolation and produces "Hello, !" instead of the
+  // documented "Hello, stranger!" fallback.
   return `Hello, ${cleaned}!`;
 }
