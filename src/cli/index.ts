@@ -21,6 +21,8 @@ import {
   uninstallExtension,
 } from '../extensions/loader.js';
 import { projectConfigPath } from '../config/projectConfig.js';
+import { PROVIDER_IDS, providerMeta } from '../providers/registry.js';
+import { probeLocalProvider, resolveBaseUrlForProvider } from '../providers/health.js';
 
 interface CliArgs {
   provider?: string;
@@ -102,17 +104,17 @@ async function main(): Promise<void> {
         y
           .option('provider', {
             type: 'string',
-            choices: ['openai', 'anthropic', 'google', 'litellm'] as const,
+            choices: [...PROVIDER_IDS] as readonly string[],
             describe: 'LLM provider',
           })
           .option('model', { type: 'string', describe: 'Model name (provider-specific)' })
-          .option('api-key', { type: 'string', describe: 'Provider API key' })
+          .option('api-key', { type: 'string', describe: 'Provider API key (optional for local providers)' })
           .option('base-url', { type: 'string', describe: 'Provider base URL (optional)' })
           .option('reset', { type: 'boolean', default: false, describe: 'Replace existing config' })
           .option('non-interactive', {
             type: 'boolean',
             default: false,
-            describe: 'Skip the TUI wizard (requires --provider, --model, --api-key)',
+            describe: 'Skip the TUI wizard (requires --provider and --model)',
           }),
     )
     .command('extensions', 'Manage installed extensions', (y) =>
@@ -124,7 +126,7 @@ async function main(): Promise<void> {
     )
     .option('provider', {
       type: 'string',
-      describe: 'LLM provider: openai | anthropic | google | litellm',
+      describe: `LLM provider: ${PROVIDER_IDS.join(' | ')}`,
     })
     .option('model', { type: 'string', describe: 'Model name (provider-specific)' })
     .option('sandbox', {
@@ -206,12 +208,34 @@ async function main(): Promise<void> {
   const settings = await loadSettings();
   logger.debug('settings loaded', { provider: settings.provider, model: settings.model });
 
+  // For local providers (Ollama, LM Studio, LiteLLM) the server must be
+  // reachable BEFORE we start streaming — fail fast with a friendly hint
+  // instead of letting the OpenAI SDK throw an opaque connection error.
+  const activeMeta = providerMeta(settings.provider);
+  if (!activeMeta.requiresApiKey) {
+    const baseUrl = resolveBaseUrlForProvider(settings.provider, settings.providers[settings.provider]?.baseUrl);
+    if (baseUrl) {
+      try {
+        await probeLocalProvider(settings.provider, baseUrl);
+        logger.debug('local provider probe ok', { provider: settings.provider, baseUrl });
+      } catch (err) {
+        // Print the friendly error and exit non-zero so scripts / CI
+        // can detect the missing daemon. TUI users see this on startup
+        // rather than after they type a prompt.
+        process.stderr.write(`\n[codexrev] ${(err as Error).message}\n\n`);
+        process.exitCode = 1;
+        return;
+      }
+    }
+  }
+
   // Friendly nudge: no project config and no API key resolved anywhere.
+  // Local providers (requiresApiKey === false) are always considered
+  // resolved once the probe above passes — skip the nudge for them.
   const hasResolvedKey =
+    !activeMeta.requiresApiKey ||
     !!settings.providers[settings.provider]?.apiKey ||
-    !!process.env.OPENAI_API_KEY ||
-    !!process.env.ANTHROPIC_API_KEY ||
-    !!process.env.GOOGLE_API_KEY;
+    !!(activeMeta.envKeyVar && process.env[activeMeta.envKeyVar]);
   const hasProjectConfig = await (async () => {
     try {
       const { existsSync } = await import('node:fs');

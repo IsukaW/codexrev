@@ -21,6 +21,7 @@ export type {
   GenerateResponse,
   ContentGenerator,
   ContentGeneratorConfig,
+  ProviderCapabilities,
   Role,
   ProviderId,
   TurnFinishReason,
@@ -33,6 +34,14 @@ export { createAgent, type Agent, type AgentOptions } from '../core/agent.js';
 
 // ─── Provider factories ───────────────────────────────────────────
 export { buildProvider, type ProviderHandle } from '../providers/index.js';
+export type { ProviderMeta } from '../providers/registry.js';
+export {
+  PROVIDER_REGISTRY,
+  PROVIDER_IDS,
+  isProviderId,
+  providerMeta,
+} from '../providers/registry.js';
+export { probeLocalProvider, resolveBaseUrlForProvider } from '../providers/health.js';
 
 // ─── Configuration ────────────────────────────────────────────────
 export type {
@@ -71,6 +80,7 @@ export {
   ToolError,
   SandboxError,
   McpError,
+  LocalServerError,
   CheckpointError as _LegacyCheckpointError,
 } from '../utils/errors.js';
 // Re-export the canonical CheckpointError from the new services module

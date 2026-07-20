@@ -6,6 +6,8 @@
  * external chalk/picocolors dep — keeps the bundle lean.
  */
 
+import { PROVIDER_IDS } from '../providers/registry.js';
+
 const PALETTE = {
   reset: '\x1b[0m',
   bold: '\x1b[1m',
@@ -87,7 +89,7 @@ export function renderHelp(): void {
 
   heading('Options');
   const rows: Array<[string, string, string]> = [
-    ['--provider', '<name>', 'openai | anthropic | google | litellm'],
+    ['--provider', '<name>', PROVIDER_IDS.join(' | ')],
     ['--model', '<name>', 'Model name (provider-specific)'],
     ['--sandbox', '<mode>', 'auto | seatbelt | docker | podman | off'],
     ['--theme', '<name>', 'dark | light | solarized | monokai | nord'],
@@ -123,6 +125,9 @@ export function renderHelp(): void {
   process.stdout.write(`  ${green('$')} ${b('codexrev')} -p ${cyan('"summarize this repo"')}\n`);
   process.stdout.write(
     `  ${green('$')} ${b('codexrev')} ${cyan('init')} --provider openai --model gpt-4o --api-key ${yellow('$OPENAI_API_KEY')}\n`,
+  );
+  process.stdout.write(
+    `  ${green('$')} ${b('codexrev')} ${cyan('init')} --provider ollama --model llama3.1 ${dim('  # no --api-key needed')}\n`,
   );
   process.stdout.write(
     `  ${green('$')} ${b('codexrev')} ${cyan('init')} ${dim('  # launches the TUI wizard')}\n`,

@@ -22,6 +22,10 @@ import { ProviderError } from '../core/types.js';
 
 export class GoogleGenerator implements ContentGenerator {
   readonly provider = 'google' as const;
+  readonly capabilities = {
+    supportsTools: true,
+    supportsStreamingUsage: false,
+  } as const;
   private readonly client: GoogleGenAI;
 
   constructor(cfg: ContentGeneratorConfig) {

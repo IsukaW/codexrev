@@ -22,6 +22,10 @@ import { ProviderError } from '../core/types.js';
 
 export class AnthropicGenerator implements ContentGenerator {
   readonly provider = 'anthropic' as const;
+  readonly capabilities = {
+    supportsTools: true,
+    supportsStreamingUsage: true,
+  } as const;
   private readonly client: Anthropic;
 
   constructor(cfg: ContentGeneratorConfig) {

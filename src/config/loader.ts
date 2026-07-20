@@ -5,7 +5,8 @@
  *   1. DEFAULT_SETTINGS
  *   2. ~/.codexrev/settings.json  (user)
  *   3. .codexrev/settings.json    (project, walking up from cwd)
- *   4. environment variables
+ *   4. encrypted project config (.codexrev/config.json)
+ *   5. environment variables
  */
 
 import { promises as fs } from 'node:fs';
@@ -19,8 +20,9 @@ import type { ProviderId } from '../core/types.js';
 import { decrypt } from '../security/secrets.js';
 import { getDek, isAvailable as keychainAvailable } from '../security/keychain.js';
 import { loadProjectConfig, projectConfigPath } from './projectConfig.js';
+import { PROVIDER_IDS } from '../providers/registry.js';
 
-const VALID_PROVIDERS: ReadonlyArray<ProviderId> = ['openai', 'anthropic', 'google', 'litellm'];
+const VALID_PROVIDERS: ReadonlyArray<ProviderId> = PROVIDER_IDS;
 
 function isPlainObject(x: unknown): x is Record<string, unknown> {
   return typeof x === 'object' && x !== null && !Array.isArray(x);

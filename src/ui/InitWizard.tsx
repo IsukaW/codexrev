@@ -14,6 +14,7 @@ import { Box, Text, useApp, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import SelectInput from 'ink-select-input';
 import type { ProviderId } from '../core/types.js';
+import { PROVIDER_REGISTRY } from '../providers/registry.js';
 
 export interface InitWizardProps {
   initialProvider?: ProviderId;
@@ -32,12 +33,9 @@ export interface InitWizardProps {
 
 type Step = 'provider' | 'model' | 'apiKey' | 'baseUrl' | 'confirm';
 
-const PROVIDER_CHOICES: Array<{ label: string; value: ProviderId }> = [
-  { label: 'openai', value: 'openai' },
-  { label: 'anthropic', value: 'anthropic' },
-  { label: 'google', value: 'google' },
-  { label: 'litellm', value: 'litellm' },
-];
+const PROVIDER_CHOICES: Array<{ label: string; value: ProviderId }> = Object.values(
+  PROVIDER_REGISTRY,
+).map((meta) => ({ label: `${meta.id} — ${meta.label}`, value: meta.id }));
 
 export const InitWizard: React.FC<InitWizardProps> = (props) => {
   const [step, setStep] = useState<Step>(props.initialProvider ? 'model' : 'provider');
@@ -63,10 +61,15 @@ export const InitWizard: React.FC<InitWizardProps> = (props) => {
 
   function submit() {
     if (!provider) return;
+    const meta = PROVIDER_REGISTRY[provider];
+    // For local providers (Ollama, LM Studio, LiteLLM) substitute a
+    // sentinel so the encrypted config still has *something* to seal.
+    const resolvedKey =
+      apiKey.trim() || (meta.requiresApiKey ? '' : meta.id);
     props.onSubmit({
       provider,
       model: model.trim(),
-      apiKey: apiKey.trim(),
+      apiKey: resolvedKey,
       ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}),
     });
   }
@@ -116,12 +119,15 @@ export const InitWizard: React.FC<InitWizardProps> = (props) => {
         </Box>
       )}
 
-      {step === 'apiKey' && (
+      {step === 'apiKey' && provider && (
         <Box flexDirection="column">
-          <Text>API key for {provider}:</Text>
+          <Text>
+            API key for {provider}
+            {PROVIDER_REGISTRY[provider].requiresApiKey ? ':' : ' (optional — Enter to skip):'}
+          </Text>
           <Box>
             <Text color="green">{'> '}</Text>
-            {showKey ? (
+            {showKey || !PROVIDER_REGISTRY[provider].requiresApiKey ? (
               <TextInput value={apiKey} onChange={setApiKey} onSubmit={() => setStep('baseUrl')} />
             ) : (
               <TextInput
@@ -132,20 +138,28 @@ export const InitWizard: React.FC<InitWizardProps> = (props) => {
               />
             )}
           </Box>
-          <Text dimColor>
-            press Tab to {showKey ? 'hide' : 'show'} the key (you can also submit while masked)
-          </Text>
+          {PROVIDER_REGISTRY[provider].requiresApiKey ? (
+            <Text dimColor>
+              press Tab to {showKey ? 'hide' : 'show'} the key (you can also submit while masked)
+            </Text>
+          ) : (
+            <Text dimColor>
+              Local servers don&apos;t need an API key — any value will be accepted.
+            </Text>
+          )}
         </Box>
       )}
 
-      {step === 'baseUrl' && (
+      {step === 'baseUrl' && provider && (
         <Box flexDirection="column">
           <Text>Base URL (optional — Enter to skip):</Text>
           <Box>
             <Text color="green">{'> '}</Text>
             <TextInput value={baseUrl} onChange={setBaseUrl} onSubmit={() => setStep('confirm')} />
           </Box>
-          <Text dimColor>e.g. http://localhost:4000 for litellm</Text>
+          <Text dimColor>
+            e.g. http://localhost:11434/v1 for ollama, http://localhost:1234/v1 for lm studio, http://localhost:4000 for litellm
+          </Text>
         </Box>
       )}
 

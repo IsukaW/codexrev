@@ -36,6 +36,11 @@ describe('loadSettings with project config', () => {
     expect(s.provider).toBe('openai');
     expect(s.providers.openai.model).toBe('gpt-4o');
     expect(s.providers.openai.apiKey).toBeUndefined();
+    // Registry-driven defaults: local providers should be wired even when
+    // nothing has been persisted yet.
+    expect(s.providers.ollama.model).toBe('llama3.1');
+    expect(s.providers.lmstudio.model).toBe('qwen2.5-7b-instruct');
+    expect(s.providers.litellm.model).toBe('gpt-4o');
   });
 
   it('merges project config and decrypts the api key', async () => {

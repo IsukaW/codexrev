@@ -6,6 +6,7 @@
  */
 
 import type { ProviderId } from '../core/types.js';
+import { PROVIDER_IDS, providerMeta } from '../providers/registry.js';
 
 export type SandboxMode = 'auto' | 'seatbelt' | 'docker' | 'podman' | 'off';
 export type ThemeName = 'dark' | 'light' | 'solarized' | 'monokai' | 'nord';
@@ -61,12 +62,9 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   provider: 'openai',
   model: 'gpt-4o',
-  providers: {
-    openai: { provider: 'openai', model: 'gpt-4o' },
-    anthropic: { provider: 'anthropic', model: 'claude-3-5-sonnet-20241022' },
-    google: { provider: 'google', model: 'gemini-1.5-pro' },
-    litellm: { provider: 'litellm', model: 'gpt-4o' },
-  },
+  providers: Object.fromEntries(
+    PROVIDER_IDS.map((id) => [id, { provider: id, model: providerMeta(id).defaultModel }]),
+  ) as Settings['providers'],
   maxOutputTokens: 8192,
   temperature: 0.7,
   topP: 1.0,
