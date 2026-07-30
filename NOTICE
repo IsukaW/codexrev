@@ -3,6 +3,5 @@ Copyright 2026 Codexrev Contributors
 
 This product includes software developed by the Codexrev project and its contributors.
 
-This product is released under the Apache License 2.0. It contains no code from
-the Google Gemini CLI, the easy-llm-cli project, or any other proprietary source.
-All implementations are original works authored for Codexrev.
+This product is released under the Apache License 2.0. All implementations are
+original works authored for Codexrev.

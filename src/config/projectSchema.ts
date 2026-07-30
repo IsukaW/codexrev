@@ -11,6 +11,26 @@ import type { EncryptedPayload } from '../security/secrets.js';
 
 export const PROJECT_CONFIG_SCHEMA_VERSION = 1 as const;
 
+export interface ModelConfig {
+  id: string;
+  name: string;
+  url?: string;
+  toolCalling?: boolean;
+  vision?: boolean;
+  maxInputTokens?: number;
+  maxOutputTokens?: number;
+  default?: boolean;
+}
+
+export interface ProviderConfigEntry {
+  name: string;
+  vendor: 'openai' | 'anthropic' | 'google' | 'ollama' | 'lmstudio' | 'litellm' | 'customendpoint';
+  apiKey?: EncryptedPayload;
+  baseUrl?: string;
+  apiType?: 'chat-completions' | 'messages' | 'generateContent';
+  models: ModelConfig[];
+}
+
 export interface ProjectConfig {
   schemaVersion: typeof PROJECT_CONFIG_SCHEMA_VERSION;
   provider: ProviderId;
@@ -22,4 +42,5 @@ export interface ProjectConfig {
   apiKey: EncryptedPayload;
   createdAt: string;
   updatedAt: string;
+  providers?: ProviderConfigEntry[];
 }

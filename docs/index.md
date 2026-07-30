@@ -4,7 +4,7 @@
 
 ## Highlights
 
-- **Multiple LLM providers**: OpenAI, Anthropic, Google Gemini, and any OpenAI-compatible endpoint (LiteLLM, vLLM, etc.).
+- **Multiple LLM providers**: OpenAI, Anthropic, Google Gemini, Ollama, LM Studio, LiteLLM, and any custom endpoint via the interactive `codexrev models add` wizard.
 - **Agent loop with tools**: A single user prompt may trigger dozens of model turns, tool calls, and re-prompts until the model emits `stop`.
 - **Built-in tools**: `shell`, `read_file`, `write_file`, `edit`, `glob`, `grep`, `web_fetch`, `web_search`.
 - **MCP integration**: Talk to Model Context Protocol servers over stdio, SSE, or streamable-HTTP transports.
@@ -21,7 +21,10 @@
 # Install (after running `npm run build` in this repo)
 npm install -g .
 
-# Set at least one provider's API key
+# Add a provider and model interactively (recommended)
+codexrev models add
+
+# Or set a provider key manually
 export OPENAI_API_KEY=sk-...
 # or
 export ANTHROPIC_API_KEY=sk-ant-...

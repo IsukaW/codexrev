@@ -8,6 +8,8 @@ This page documents every command and flag exposed by `codexrev`.
 codexrev [prompt]
 
 codexrev init                         # Initialize this project with an encrypted config
+codexrev models list                  # List all providers and models
+codexrev models add                   # Interactive wizard to add provider + model
 codexrev extensions list              # List installed extensions
 codexrev extensions install <dir>     # Install from a local directory
 codexrev extensions uninstall <name>  # Remove an installed extension
@@ -19,7 +21,7 @@ If `prompt` is omitted and no subcommand is given, Codexrev launches the interac
 
 | Flag | Alias | Type | Default | Description |
 | --- | --- | --- | --- | --- |
-| `--provider` |  | `string` | settings | One of `openai`, `anthropic`, `google`, `litellm`. |
+| `--provider` |  | `string` | settings | One of `openai`, `anthropic`, `google`, `ollama`, `lmstudio`, `litellm`. |
 | `--model` |  | `string` | settings | Provider-specific model name (e.g. `gpt-4o`, `claude-3-5-sonnet-20240620`, `gemini-1.5-pro`). |
 | `--sandbox` |  | `auto`/`seatbelt`/`docker`/`podman`/`off` | `auto` | Shell execution isolation mode. |
 | `--theme` |  | `dark`/`light`/`solarized`/`monokai`/`nord` | `dark` | Color scheme for the TUI. |
@@ -89,6 +91,79 @@ Remove an installed extension by its manifest name.
 ```bash
 codexrev extensions uninstall my-plugin
 ```
+
+### `codexrev models`
+
+Manage the multi-provider model registry. Codexrev supports registering multiple providers (OpenAI, Anthropic, Google, Ollama, LM Studio, LiteLLM, custom endpoints) each with multiple models, and switching the active model at any time.
+
+#### `models add` (interactive wizard)
+
+Launch the step-by-step interactive wizard. This is the recommended way to add providers and models.
+
+```bash
+codexrev models add
+```
+
+The wizard walks through:
+
+1. **Mode** — add a new provider (+ first model) or add a model to an existing provider
+2. **Provider name** — e.g. `minimax`, `deepseek-team`, `my-ollama`
+3. **Vendor** — `openai`, `anthropic`, `google`, `ollama`, `lmstudio`, `litellm`, `customendpoint`
+4. **Base URL** — required for `customendpoint`, optional for others
+5. **API key** — masked input with Tab to show/hide (skipped for local providers)
+6. **Model ID** — e.g. `gpt-4o`, `claude-sonnet-4-20250514`, `MiniMax-M3`
+7. **Display name** — defaults to the model ID
+8. **Tool calling** — y/N
+9. **Vision** — y/N
+10. **Max input/output tokens** — optional numeric limits
+11. **Model URL** — optional per-model URL override
+12. **Review & confirm** — shows a summary, Enter to save
+
+After saving, the wizard offers to add another model to the same provider.
+
+Requires a TTY. In non-interactive environments (CI), use the CRUD functions directly via the [Programmatic API](../programmatic-api.md).
+
+#### `models list`
+
+List all registered providers and their models.
+
+```bash
+codexrev models list
+```
+
+Output shows each provider with its vendor, base URL, API key status (🔑), and all registered models with capabilities (`[tools]`, `[vision]`), token limits, and the active model marked with ★.
+
+#### `models use <id>`
+
+Set a model as the active default for its provider.
+
+```bash
+codexrev models use gpt-4o --provider openai-prod
+```
+
+| Flag | Required | Description |
+| --- | --- | --- |
+| `--provider` | yes | Provider name the model belongs to |
+
+#### `models remove provider <name>`
+
+Remove an entire provider and all its models.
+
+```bash
+codexrev models remove provider openai-prod
+```
+
+#### `models remove model <id>`
+
+Remove a single model from a provider. If the removed model was the active default, the first remaining model becomes active.
+
+```bash
+codexrev models remove model gpt-4o --provider openai-prod
+```
+
+| Flag | Required | Description |
+| --- | --- | --- |
+| `--provider` | yes | Provider name the model belongs to |
 
 ## Output formats (non-interactive)
 

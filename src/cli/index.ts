@@ -14,6 +14,7 @@ import { ensureCodexrevHome, getCodexrevPaths } from '../utils/paths.js';
 import { runTui } from './tui.js';
 import { runNonInteractive } from './nonInteractive.js';
 import { runInit } from './init.js';
+import { handleModelsCommand } from './models.js';
 import { renderHelp, renderVersion } from './help.js';
 import {
   installExtension,
@@ -124,6 +125,22 @@ async function main(): Promise<void> {
         .command('uninstall <name>', 'Remove an installed extension')
         .demandCommand(1),
     )
+    .command('models', 'Manage AI provider models', (y) =>
+      y
+        .command('list', 'List all providers and models')
+        .command('add', 'Add provider + model (interactive wizard)')
+        .command('remove', 'Remove a provider or model', (y) =>
+          y
+            .command('provider <name>', 'Remove a provider')
+            .command('model <id>', 'Remove a model', (y) =>
+              y.option('provider', { type: 'string', demandOption: true }),
+            )
+            .demandCommand(1),
+        )
+        .command('use <id>', 'Set active model', (y) =>
+          y.option('provider', { type: 'string', demandOption: true }),
+        ),
+    )
     .option('provider', {
       type: 'string',
       describe: `LLM provider: ${PROVIDER_IDS.join(' | ')}`,
@@ -205,8 +222,39 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (argv._.includes('models')) {
+    const rest = argv._.slice(argv._.indexOf('models') + 1);
+    const sub = String(rest[0] ?? '');
+    const modelsFlags: Record<string, string | boolean | undefined> = {
+      provider: argv.provider as string | undefined,
+      vendor: argv.vendor as string | undefined,
+      url: argv.url as string | undefined,
+      'api-key': argv['api-key'] as string | undefined,
+      'api-type': argv['api-type'] as string | undefined,
+      name: argv.name as string | undefined,
+      tokens: argv.tokens as string | undefined,
+      'max-output': argv['max-output'] as string | undefined,
+      'tool-calling': argv['tool-calling'] as boolean | undefined,
+      vision: argv.vision as boolean | undefined,
+    };
+    // yargs puts positional args into argv.<name>, not into rest.
+    // For nested commands like `models add provider <name>`, rest = ['add', 'provider'].
+    // Pass all positional args so the CLI handler can route correctly.
+    const positional: Array<string | number> = [];
+    for (let i = 1; i < rest.length; i++) positional.push(rest[i]);
+    if (argv.name) positional.push(String(argv.name));
+    if (argv.id) positional.push(String(argv.id));
+    await handleModelsCommand(sub, positional, modelsFlags);
+    return;
+  }
+
   const settings = await loadSettings();
   logger.debug('settings loaded', { provider: settings.provider, model: settings.model });
+
+  if (argv.model) {
+    settings.model = argv.model as string;
+    logger.debug('model overridden via --model flag', { model: settings.model });
+  }
 
   // For local providers (Ollama, LM Studio, LiteLLM) the server must be
   // reachable BEFORE we start streaming — fail fast with a friendly hint

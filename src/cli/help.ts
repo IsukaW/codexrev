@@ -70,6 +70,9 @@ export function renderHelp(): void {
   process.stdout.write(
     `  ${green('$')} ${b('codexrev')} ${cyan('extensions')} ${dim('<list|install|uninstall>')}\n`,
   );
+  process.stdout.write(
+    `  ${green('$')} ${b('codexrev')} ${cyan('models')} ${dim('<list|add|remove|use>')}\n`,
+  );
 
   heading('Commands');
   process.stdout.write(
@@ -77,6 +80,9 @@ export function renderHelp(): void {
   );
   process.stdout.write(
     `  ${b(cyan('extensions'))}      ${'Manage installed extensions  '}${dim('(~/.codexrev/extensions/)')}\n`,
+  );
+  process.stdout.write(
+    `  ${b(cyan('models'))}          ${'Manage AI provider models  '}${dim('(add, list, use, remove)')}\n`,
   );
 
   const writeRow = (flag: string, arg: string, desc: string): void => {
@@ -132,6 +138,46 @@ export function renderHelp(): void {
   process.stdout.write(
     `  ${green('$')} ${b('codexrev')} ${cyan('init')} ${dim('  # launches the TUI wizard')}\n`,
   );
+
+  heading('Models management');
+  process.stdout.write(
+    `  ${green('$')} ${b('codexrev')} ${cyan('models add')}${dim('                                              interactive wizard (requires TTY)')}\n`,
+  );
+  process.stdout.write(
+    `  ${green('$')} ${b('codexrev')} ${cyan('models list')}${dim('                                           list all providers & models')}\n`,
+  );
+  process.stdout.write(
+    `  ${green('$')} ${b('codexrev')} ${cyan('models use')} ${yellow('<id>')} --provider ${yellow('<name>')}${dim('            set active model')}\n`,
+  );
+  process.stdout.write(
+    `  ${green('$')} ${b('codexrev')} ${cyan('models remove provider')} ${yellow('<name>')}${dim('                 remove a provider')}\n`,
+  );
+  process.stdout.write(
+    `  ${green('$')} ${b('codexrev')} ${cyan('models remove model')} ${yellow('<id>')} --provider ${yellow('<name>')}${dim('     remove a model')}\n`,
+  );
+
+  heading('Models examples');
+  process.stdout.write(
+    `  ${dim('# Launch interactive wizard — step by step (requires TTY)')}\n`,
+  );
+  process.stdout.write(
+    `  ${green('$')} ${b('codexrev')} ${cyan('models add')}\n`,
+  );
+  process.stdout.write(
+    `  ${dim('# Switch active model and list')}\n`,
+  );
+  process.stdout.write(
+    `  ${green('$')} ${b('codexrev')} ${cyan('models use')} ${yellow('claude-sonnet-4-20250514')} --provider anthropic-team\n`,
+  );
+  process.stdout.write(
+    `  ${green('$')} ${b('codexrev')} ${cyan('models list')}\n`,
+  );
+
+  heading('Models flags');
+  const modelRows: Array<[string, string, string]> = [
+    ['--provider', '<name>', 'Provider name (for remove model, use)'],
+  ];
+  for (const [flag, arg, desc] of modelRows) writeRow(flag, arg, desc);
 
   heading('Learn more');
   process.stdout.write(

@@ -70,6 +70,62 @@ For per-project API keys, run `codexrev init` once in your project root. It writ
 }
 ```
 
+#### Multi-provider registry
+
+When you use `codexrev models add`, additional providers and models are stored in the `providers` array inside the same `config.json`:
+
+```jsonc
+{
+  "schemaVersion": 1,
+  "provider": "ollama",
+  "model": "llama3.1",
+  "baseUrl": "http://localhost:11434/v1",
+  "apiKey": { /* encrypted */ },
+  "providers": [
+    {
+      "name": "minimax",
+      "vendor": "openai",
+      "baseUrl": "https://api.minimax.io/v1",
+      "models": [
+        {
+          "id": "MiniMax-M3",
+          "name": "MiniMax-M3",
+          "toolCalling": true,
+          "vision": false,
+          "maxInputTokens": 128000,
+          "default": true
+        }
+      ],
+      "apiKey": { /* encrypted, per-provider */ }
+    }
+  ]
+}
+```
+
+Each provider entry has:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `name` | `string` | Unique provider name (e.g. `minimax`, `ollama-local`) |
+| `vendor` | `string` | One of `openai`, `anthropic`, `google`, `ollama`, `lmstudio`, `litellm`, `customendpoint` |
+| `baseUrl` | `string?` | Provider base URL (required for `customendpoint`) |
+| `apiType` | `string?` | API type override: `chat-completions`, `messages`, `generateContent` |
+| `models` | `ModelConfig[]` | Registered models |
+| `apiKey` | `object?` | Per-provider encrypted API key |
+
+Each model entry has:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | `string` | Model identifier (e.g. `gpt-4o`, `MiniMax-M3`) |
+| `name` | `string` | Display name |
+| `url` | `string?` | Per-model URL override |
+| `toolCalling` | `boolean` | Supports tool/function calling |
+| `vision` | `boolean` | Supports image/vision input |
+| `maxInputTokens` | `number?` | Maximum input token limit |
+| `maxOutputTokens` | `number?` | Maximum output token limit |
+| `default` | `boolean` | Whether this is the active model for this provider |
+
 The corresponding 256-bit DEK is stored in the **OS keychain** under service `codexrev` and account `<username>:<sha256(cwd)[..32]>`. On disk the file is `0600`, the directory is `0700` (POSIX). The plaintext API key is never written to disk and never logged.
 
 If the OS keychain is unavailable on Linux, install `libsecret-1-0` (`sudo apt install libsecret-1-0`). The CLI will refuse to start `init` if the keychain is unreachable — it never silently falls back to plaintext.

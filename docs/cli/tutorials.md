@@ -53,3 +53,44 @@ codexrev --print "Summarise the last 10 commits" \
   --output-format stream-json \
   | jq -c 'select(.kind=="text_delta") | .text'
 ```
+
+## T6 — Add a new provider with the models wizard
+
+```bash
+codexrev models add
+```
+
+The interactive wizard walks you through adding a provider and its first model. For example, to add MiniMax:
+
+1. Select **Add new provider (+ first model)**
+2. Enter provider name: `minimax`
+3. Select vendor: `customendpoint — Custom OpenAI-compatible`
+4. Enter base URL: `https://api.minimax.io/v1`
+5. Enter your API key (Tab to toggle visibility)
+6. Enter model ID: `MiniMax-M3`
+7. Press Enter for the default display name
+8. Answer capability prompts (tool-calling, vision, token limits)
+9. Review and press Enter to save
+
+After saving, you can add more models to the same provider or exit.
+
+## T7 — Add a model to an existing provider
+
+```bash
+codexrev models add
+```
+
+Select **Add model to existing provider**, pick the provider, and fill in the model details. This is useful when a provider releases a new model (e.g. adding `gpt-4o-mini` alongside `gpt-4o`).
+
+## T8 — Switch between providers and models
+
+```bash
+# See what's available
+codexrev models list
+
+# Switch the active model
+codexrev models use claude-sonnet-4-20250514 --provider anthropic-team
+
+# Now codexrev uses that model by default
+codexrev --print "Explain this codebase"
+```

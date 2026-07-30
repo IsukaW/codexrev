@@ -14,7 +14,8 @@ let origCwd: string;
 
 beforeEach(async () => {
   origCwd = process.cwd();
-  tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'codexrev-loader-'));
+  const raw = await fs.mkdtemp(path.join(os.tmpdir(), 'codexrev-loader-'));
+  tmpRoot = await fs.realpath(raw);
   process.env.CODEXREV_TEST_FAKE_KEYCHAIN = '1';
   process.env.CODEXREV_HOME = path.join(tmpRoot, '.codexrev-home');
   _resetFakeStore();
@@ -76,6 +77,91 @@ describe('loadSettings with project config', () => {
     });
 
     await expect(loadSettings()).rejects.toThrow(/no matching DEK/);
+  });
+
+  it('resolves active model from providers array', async () => {
+    process.chdir(tmpRoot);
+    const dek = generateDek();
+    await setDek(tmpRoot, dek);
+    await saveProjectConfig(tmpRoot, {
+      schemaVersion: 1,
+      provider: 'openai',
+      model: 'gpt-4o',
+      apiKey: encrypt('sk-test', dek),
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+      providers: [
+        { name: 'my-openai', vendor: 'openai', models: [
+          { id: 'gpt4', name: 'gpt-4o', default: false },
+          { id: 'gpt4-turbo', name: 'gpt-4-turbo', default: true },
+        ]},
+      ],
+    });
+
+    const s = await loadSettings();
+    expect(s.model).toBe('gpt4-turbo');
+    expect(s.providers.openai.model).toBe('gpt4-turbo');
+  });
+
+  it('resolves active model with per-provider API key', async () => {
+    process.chdir(tmpRoot);
+    const dek = generateDek();
+    await setDek(tmpRoot, dek);
+    await saveProjectConfig(tmpRoot, {
+      schemaVersion: 1,
+      provider: 'openai',
+      model: 'gpt-4o',
+      apiKey: encrypt('sk-legacy', dek),
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+      providers: [
+        { name: 'my-ds', vendor: 'customendpoint', baseUrl: 'https://api.deepseek.com/v1', apiKey: encrypt('sk-ds-test', dek), models: [
+          { id: 'ds-v4', name: 'deepseek-v4', default: true },
+        ]},
+      ],
+    });
+
+    const s = await loadSettings();
+    expect(s.model).toBe('ds-v4');
+    expect(s.providers.openai.apiKey).toBe('sk-ds-test');
+  });
+
+  it('falls back to legacy single-key path when no providers', async () => {
+    process.chdir(tmpRoot);
+    const dek = generateDek();
+    await setDek(tmpRoot, dek);
+    await saveProjectConfig(tmpRoot, {
+      schemaVersion: 1,
+      provider: 'openai',
+      model: 'gpt-4o',
+      apiKey: encrypt('sk-test', dek),
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+    });
+
+    const s = await loadSettings();
+    expect(s.model).toBe('gpt-4o');
+    expect(s.providers.openai.apiKey).toBe('sk-test');
+  });
+
+  it('falls back to static model when providers has no models', async () => {
+    process.chdir(tmpRoot);
+    const dek = generateDek();
+    await setDek(tmpRoot, dek);
+    await saveProjectConfig(tmpRoot, {
+      schemaVersion: 1,
+      provider: 'openai',
+      model: 'gpt-4o',
+      apiKey: encrypt('sk-test', dek),
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+      providers: [
+        { name: 'my-openai', vendor: 'openai', models: [] },
+      ],
+    });
+
+    const s = await loadSettings();
+    expect(s.model).toBe('gpt-4o');
   });
 
   it('throws on tampered ciphertext', async () => {

@@ -7,9 +7,9 @@ The file is plain Markdown. The first paragraph is the most important — that's
 Example:
 
 ```markdown
-# project: easy-llm-cli
+# project: codexrev
 
-A CLI for talking to LLMs. Uses Ink for the TUI and esbuild to bundle.
+A multi-provider agentic CLI for code, research, and shell automation. Uses Ink for the TUI and esbuild to bundle.
 
 - Always bump `package.json` version after a merge to `main`.
 - Never modify generated files in `dist/` directly; rebuild with `npm run build`.
