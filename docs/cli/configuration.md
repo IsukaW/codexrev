@@ -22,6 +22,9 @@ The shipped defaults fill in any gaps.
   "theme": "dark",
   "telemetry": false,
   "approvalMode": "on-request",
+  "defaultMode": "ask",
+  "maxFixAttempts": 5,
+  "verificationMode": "auto",
   "mcp": {
     "filesystem": {
       "transport": "stdio",
@@ -42,6 +45,9 @@ The shipped defaults fill in any gaps.
 | `CODEXREV_THEME` | `theme` |
 | `CODEXREV_TELEMETRY` | `telemetry` |
 | `CODEXREV_APPROVAL_MODE` | `approvalMode` |
+| `CODEXREV_DEFAULT_MODE` | `defaultMode` (`ask` / `plan` / `agent`) |
+| `CODEXREV_MAX_FIX_ATTEMPTS` | `maxFixAttempts` (number, default `5`) |
+| `CODEXREV_VERIFICATION_MODE` | `verificationMode` (`tests` / `llm` / `auto`) |
 | `OPENAI_API_KEY` | provider: `openai` API key |
 | `ANTHROPIC_API_KEY` | provider: `anthropic` API key |
 | `GOOGLE_API_KEY` | provider: `google` API key |
@@ -145,6 +151,16 @@ Codexrev also still reads `.codexrev/settings.json` starting at cwd and walking 
 - `off`: no sandbox.
 
 See [sandbox.md](../sandbox.md) for details and risk tradeoffs.
+
+## Interaction modes
+
+| Setting | Type | Default | Description |
+| --- | --- | --- | --- |
+| `defaultMode` | `ask` / `plan` / `agent` | `ask` | Mode selected when the TUI starts. Can be changed at runtime with Tab or `/mode`. |
+| `maxFixAttempts` | `number` | `5` | Maximum fix-loop retries in Agent mode before giving up. |
+| `verificationMode` | `tests` / `llm` / `auto` | `auto` | How the Resolver verifies changes. `tests` runs the project test suite; `llm` asks the model to evaluate; `auto` tries tests first, falls back to LLM if no test runner is detected. |
+
+See [Architecture](../core/architecture.md) for how the multi-agent pipeline and fix loop work.
 
 ## Telemetry
 

@@ -83,6 +83,7 @@ const VENDOR_LABELS: Record<VendorType, string> = {
 
 type Step =
   | 'mode'
+  | 'existingPicker'
   | 'providerName'
   | 'vendor'
   | 'baseUrl'

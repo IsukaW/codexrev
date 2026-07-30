@@ -7,6 +7,8 @@
 
 import type { ProviderId } from '../core/types.js';
 import { PROVIDER_IDS, providerMeta } from '../providers/registry.js';
+import type { InteractionMode } from '../core/modes.js';
+import type { VerificationMode } from '../core/verification.js';
 
 export type SandboxMode = 'auto' | 'seatbelt' | 'docker' | 'podman' | 'off';
 export type ThemeName = 'dark' | 'light' | 'solarized' | 'monokai' | 'nord';
@@ -55,6 +57,12 @@ export interface Settings {
   maxTurns: number;
   /** Approval policy for shell commands. */
   approvalMode: 'always' | 'on-request' | 'never';
+  /** Default interaction mode on startup. */
+  defaultMode: InteractionMode;
+  /** Maximum number of fix-loop iterations in Agent mode. */
+  maxFixAttempts: number;
+  /** Verification strategy for the fix loop. */
+  verificationMode: VerificationMode;
   /** Extra metadata stored on the user's machine only. */
   metadata: Record<string, unknown>;
 }
@@ -76,5 +84,8 @@ export const DEFAULT_SETTINGS: Settings = {
   toolTimeoutMs: 60_000,
   maxTurns: 50,
   approvalMode: 'on-request',
+  defaultMode: 'ask',
+  maxFixAttempts: 5,
+  verificationMode: 'auto',
   metadata: {},
 };

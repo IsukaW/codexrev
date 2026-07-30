@@ -25,6 +25,7 @@ If `prompt` is omitted and no subcommand is given, Codexrev launches the interac
 | `--model` |  | `string` | settings | Provider-specific model name (e.g. `gpt-4o`, `claude-3-5-sonnet-20240620`, `gemini-1.5-pro`). |
 | `--sandbox` |  | `auto`/`seatbelt`/`docker`/`podman`/`off` | `auto` | Shell execution isolation mode. |
 | `--theme` |  | `dark`/`light`/`solarized`/`monokai`/`nord` | `dark` | Color scheme for the TUI. |
+| `--mode` |  | `ask`/`plan`/`agent` | `ask` | Initial interaction mode. |
 | `--telemetry` |  | `boolean` | `false` | Enable OpenTelemetry export (requires a collector). |
 | `--no-update` |  | `boolean` | `false` | Skip the background update check. |
 | `--print` | `-p` | `string` |  | Run non-interactively with this prompt and print the result. |
@@ -164,6 +165,42 @@ codexrev models remove model gpt-4o --provider openai-prod
 | Flag | Required | Description |
 | --- | --- | --- |
 | `--provider` | yes | Provider name the model belongs to |
+
+## TUI slash commands
+
+When running in interactive mode, the following slash commands are available:
+
+| Command | Description |
+| --- | --- |
+| `/help` | Show all commands and key bindings. |
+| `/mode [name]` | Show current mode, or switch to `ask`, `plan`, or `agent`. |
+| `/tools` | List all registered tools. |
+| `/clear` | Clear the conversation. |
+| `/theme <name>` | Show or set the color theme. |
+| `/quit` | Exit the TUI. |
+
+## TUI key bindings
+
+| Key | Context | Action |
+| --- | --- | --- |
+| **Tab** | Normal | Cycle mode: Ask → Plan → Agent → Ask |
+| **Ctrl+C** | Running | Abort current operation |
+| **Ctrl+C** | Idle | Exit Codexrev |
+| **Tab** | Clarification (with suggestions) | Toggle between suggestion list and free-form text input |
+
+## Modes
+
+Codexrev has three interaction modes that control how the agent processes your input. The current mode is shown as a color-coded badge next to the input prompt.
+
+| Mode | Badge | Description |
+| --- | --- | --- |
+| **Ask** | 🔵 `[Ask]` | Read-only Q&A — no file edits, no shell commands. Uses only `read_file`, `glob`, `grep`, `web_fetch`, `web_search`. |
+| **Plan** | 🟡 `[Plan]` | Generates a step-by-step plan — no execution. Read-only tools only. |
+| **Agent** | 🟢 `[Agent]` | Full pipeline: Committee (analysis) → Breaker-Builder (implementation) → Resolver (verification). Supports all tools and automatic fix-loop retries. |
+
+Switch modes by pressing **Tab**, or type `/mode agent` to switch explicitly.
+
+When you switch from Plan to Agent mode, the Agent automatically receives the full conversation history (including any plans generated in Plan mode) as context.
 
 ## Output formats (non-interactive)
 

@@ -1,6 +1,6 @@
 # Built-in tools
 
-Codexrev ships eight built-in tools:
+Codexrev ships nine built-in tools:
 
 | Name | Description |
 | --- | --- |
@@ -12,6 +12,7 @@ Codexrev ships eight built-in tools:
 | `grep` | Search files for a regex. |
 | `web_fetch` | GET a URL and return the body as text. |
 | `web_search` | Search the web (Google by default). |
+| `ask_user` | Pause execution and ask the user a clarification question. |
 
 Each is described in detail on its own page:
 
@@ -22,6 +23,20 @@ Each is described in detail on its own page:
 - [mcp_server.md](mcp-server.md)
 - [memory.md](memory.md)
 - [multi_file.md](multi-file.md)
+
+### `ask_user` tool
+
+The `ask_user` tool lets the model pause execution and ask the user a clarification question. It is available in all modes and is especially important in the pipeline, where ambiguous requests can be resolved before implementation begins.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+| --- | --- | --- | --- |
+| `question` | `string` | yes | The question to ask the user. |
+| `suggestions` | `string[]` | no | Quick-select answer options shown in the TUI. |
+| `context` | `string` | no | Additional context displayed alongside the question. |
+
+When the model calls this tool, the TUI shows a bordered prompt with the question, optional suggestions (selectable with ↑↓ + Enter), and a free-form text input (Tab to toggle between suggestions and custom input when suggestions are present). The user's answer is returned to the model as a tool result, and execution resumes.
 
 To inspect them programmatically:
 

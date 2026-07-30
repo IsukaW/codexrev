@@ -17,6 +17,8 @@ import { findProjectConfig, getCodexrevPaths } from '../utils/paths.js';
 import { ENV } from '../utils/env.js';
 import { ConfigError } from '../utils/errors.js';
 import type { ProviderId } from '../core/types.js';
+import type { InteractionMode } from '../core/modes.js';
+import type { VerificationMode } from '../core/verification.js';
 import { decrypt } from '../security/secrets.js';
 import { getDek, isAvailable as keychainAvailable } from '../security/keychain.js';
 import { loadProjectConfig, projectConfigPath } from './projectConfig.js';
@@ -84,6 +86,21 @@ function applyEnvOverrides(s: Settings): Settings {
   }
   if (process.env.CODEXREV_CHECKPOINTING) {
     next.checkpointing = process.env.CODEXREV_CHECKPOINTING === 'true';
+  }
+  if (process.env.CODEXREV_DEFAULT_MODE) {
+    const m = process.env.CODEXREV_DEFAULT_MODE.toLowerCase();
+    if (['ask', 'plan', 'agent'].includes(m)) {
+      next.defaultMode = m as InteractionMode;
+    }
+  }
+  if (process.env.CODEXREV_MAX_FIX_ATTEMPTS) {
+    next.maxFixAttempts = parseInt(process.env.CODEXREV_MAX_FIX_ATTEMPTS, 10);
+  }
+  if (process.env.CODEXREV_VERIFICATION_MODE) {
+    const vm = process.env.CODEXREV_VERIFICATION_MODE.toLowerCase();
+    if (['tests', 'llm', 'auto'].includes(vm)) {
+      next.verificationMode = vm as VerificationMode;
+    }
   }
   return next;
 }
