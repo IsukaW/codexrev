@@ -41,6 +41,7 @@
     "typecheck": "tsc --noEmit",
     "postinstall": "node scripts/postinstall.js",
     "prepare": "npm run build"
+    ,"release": "npm publish --access public"
   },
   "keywords": [
     "codexrev",
