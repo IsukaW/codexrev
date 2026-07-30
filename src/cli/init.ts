@@ -23,6 +23,7 @@ import { encrypt, generateDek } from '../security/secrets.js';
 import { InitWizard } from '../ui/InitWizard.js';
 import type { ProviderId } from '../core/types.js';
 import { DEFAULT_SETTINGS } from '../config/schema.js';
+import { isProviderId, providerMeta } from '../providers/registry.js';
 
 export interface InitOptions {
   cwd: string;
@@ -32,10 +33,6 @@ export interface InitOptions {
   baseUrl?: string;
   reset?: boolean;
   nonInteractive?: boolean;
-}
-
-function isProviderId(s: string | undefined): s is ProviderId {
-  return s === 'openai' || s === 'anthropic' || s === 'google' || s === 'litellm';
 }
 
 function defaultModelFor(provider: ProviderId): string {
@@ -78,9 +75,26 @@ export async function runInit(opts: InitOptions): Promise<void> {
     model = opts.model;
     apiKey = opts.apiKey;
     baseUrl = opts.baseUrl;
-    if (!provider || !model || !apiKey) {
+    // Local providers (Ollama, LM Studio, LiteLLM) don't need an API key —
+    // substitute the provider id as a sentinel so the OpenAI SDK client is
+    // happy and the encrypted config still has something to store.
+    if (provider && !providerMeta(provider).requiresApiKey && !apiKey) {
+      apiKey = provider;
+    }
+    if (!provider || !model) {
       process.stderr.write(
-        `[codexrev] --non-interactive requires --provider, --model, and --api-key\n`,
+        `[codexrev] --non-interactive requires --provider and --model\n`,
+      );
+      process.exitCode = 2;
+      return;
+    }
+    // Cloud providers still require --api-key.
+    if (provider && providerMeta(provider).requiresApiKey && !apiKey) {
+      const envHint = providerMeta(provider).envKeyVar
+        ? ` (or set ${providerMeta(provider).envKeyVar})`
+        : '';
+      process.stderr.write(
+        `[codexrev] --non-interactive: provider "${provider}" requires --api-key${envHint}\n`,
       );
       process.exitCode = 2;
       return;

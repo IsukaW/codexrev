@@ -14,6 +14,7 @@ import { ensureCodexrevHome, getCodexrevPaths } from '../utils/paths.js';
 import { runTui } from './tui.js';
 import { runNonInteractive } from './nonInteractive.js';
 import { runInit } from './init.js';
+import { handleModelsCommand } from './models.js';
 import { renderHelp, renderVersion } from './help.js';
 import {
   installExtension,
@@ -21,6 +22,8 @@ import {
   uninstallExtension,
 } from '../extensions/loader.js';
 import { projectConfigPath } from '../config/projectConfig.js';
+import { PROVIDER_IDS, providerMeta } from '../providers/registry.js';
+import { probeLocalProvider, resolveBaseUrlForProvider } from '../providers/health.js';
 
 interface CliArgs {
   provider?: string;
@@ -102,17 +105,17 @@ async function main(): Promise<void> {
         y
           .option('provider', {
             type: 'string',
-            choices: ['openai', 'anthropic', 'google', 'litellm'] as const,
+            choices: [...PROVIDER_IDS] as readonly string[],
             describe: 'LLM provider',
           })
           .option('model', { type: 'string', describe: 'Model name (provider-specific)' })
-          .option('api-key', { type: 'string', describe: 'Provider API key' })
+          .option('api-key', { type: 'string', describe: 'Provider API key (optional for local providers)' })
           .option('base-url', { type: 'string', describe: 'Provider base URL (optional)' })
           .option('reset', { type: 'boolean', default: false, describe: 'Replace existing config' })
           .option('non-interactive', {
             type: 'boolean',
             default: false,
-            describe: 'Skip the TUI wizard (requires --provider, --model, --api-key)',
+            describe: 'Skip the TUI wizard (requires --provider and --model)',
           }),
     )
     .command('extensions', 'Manage installed extensions', (y) =>
@@ -122,9 +125,25 @@ async function main(): Promise<void> {
         .command('uninstall <name>', 'Remove an installed extension')
         .demandCommand(1),
     )
+    .command('models', 'Manage AI provider models', (y) =>
+      y
+        .command('list', 'List all providers and models')
+        .command('add', 'Add provider + model (interactive wizard)')
+        .command('remove', 'Remove a provider or model', (y) =>
+          y
+            .command('provider <name>', 'Remove a provider')
+            .command('model <id>', 'Remove a model', (y) =>
+              y.option('provider', { type: 'string', demandOption: true }),
+            )
+            .demandCommand(1),
+        )
+        .command('use <id>', 'Set active model', (y) =>
+          y.option('provider', { type: 'string', demandOption: true }),
+        ),
+    )
     .option('provider', {
       type: 'string',
-      describe: 'LLM provider: openai | anthropic | google | litellm',
+      describe: `LLM provider: ${PROVIDER_IDS.join(' | ')}`,
     })
     .option('model', { type: 'string', describe: 'Model name (provider-specific)' })
     .option('sandbox', {
@@ -203,15 +222,68 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (argv._.includes('models')) {
+    const rest = argv._.slice(argv._.indexOf('models') + 1);
+    const sub = String(rest[0] ?? '');
+    const modelsFlags: Record<string, string | boolean | undefined> = {
+      provider: argv.provider as string | undefined,
+      vendor: argv.vendor as string | undefined,
+      url: argv.url as string | undefined,
+      'api-key': argv['api-key'] as string | undefined,
+      'api-type': argv['api-type'] as string | undefined,
+      name: argv.name as string | undefined,
+      tokens: argv.tokens as string | undefined,
+      'max-output': argv['max-output'] as string | undefined,
+      'tool-calling': argv['tool-calling'] as boolean | undefined,
+      vision: argv.vision as boolean | undefined,
+    };
+    // yargs puts positional args into argv.<name>, not into rest.
+    // For nested commands like `models add provider <name>`, rest = ['add', 'provider'].
+    // Pass all positional args so the CLI handler can route correctly.
+    const positional: Array<string | number> = [];
+    for (let i = 1; i < rest.length; i++) positional.push(rest[i]);
+    if (argv.name) positional.push(String(argv.name));
+    if (argv.id) positional.push(String(argv.id));
+    await handleModelsCommand(sub, positional, modelsFlags);
+    return;
+  }
+
   const settings = await loadSettings();
   logger.debug('settings loaded', { provider: settings.provider, model: settings.model });
 
+  if (argv.model) {
+    settings.model = argv.model as string;
+    logger.debug('model overridden via --model flag', { model: settings.model });
+  }
+
+  // For local providers (Ollama, LM Studio, LiteLLM) the server must be
+  // reachable BEFORE we start streaming — fail fast with a friendly hint
+  // instead of letting the OpenAI SDK throw an opaque connection error.
+  const activeMeta = providerMeta(settings.provider);
+  if (!activeMeta.requiresApiKey) {
+    const baseUrl = resolveBaseUrlForProvider(settings.provider, settings.providers[settings.provider]?.baseUrl);
+    if (baseUrl) {
+      try {
+        await probeLocalProvider(settings.provider, baseUrl);
+        logger.debug('local provider probe ok', { provider: settings.provider, baseUrl });
+      } catch (err) {
+        // Print the friendly error and exit non-zero so scripts / CI
+        // can detect the missing daemon. TUI users see this on startup
+        // rather than after they type a prompt.
+        process.stderr.write(`\n[codexrev] ${(err as Error).message}\n\n`);
+        process.exitCode = 1;
+        return;
+      }
+    }
+  }
+
   // Friendly nudge: no project config and no API key resolved anywhere.
+  // Local providers (requiresApiKey === false) are always considered
+  // resolved once the probe above passes — skip the nudge for them.
   const hasResolvedKey =
+    !activeMeta.requiresApiKey ||
     !!settings.providers[settings.provider]?.apiKey ||
-    !!process.env.OPENAI_API_KEY ||
-    !!process.env.ANTHROPIC_API_KEY ||
-    !!process.env.GOOGLE_API_KEY;
+    !!(activeMeta.envKeyVar && process.env[activeMeta.envKeyVar]);
   const hasProjectConfig = await (async () => {
     try {
       const { existsSync } = await import('node:fs');

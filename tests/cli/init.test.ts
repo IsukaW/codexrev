@@ -103,4 +103,49 @@ describe('runInit', () => {
     expect(process.exitCode).toBe(2);
     process.exitCode = 0;
   });
+
+  it('succeeds for a local provider without an apiKey', async () => {
+    await runInit({
+      cwd: tmpRoot,
+      provider: 'ollama',
+      model: 'llama3.1',
+      // apiKey intentionally omitted — local servers don't need one
+      nonInteractive: true,
+    });
+
+    const cfg = await loadProjectConfig(tmpRoot);
+    expect(cfg).not.toBeNull();
+    expect(cfg?.provider).toBe('ollama');
+    expect(cfg?.model).toBe('llama3.1');
+    // The encrypted payload still has *something* sealed (the provider id
+    // is substituted as a sentinel).
+    expect(cfg?.apiKey.iv).toBeTruthy();
+    expect(cfg?.apiKey.ciphertext).toBeTruthy();
+    process.exitCode = 0;
+  });
+
+  it('succeeds for lmstudio without an apiKey', async () => {
+    await runInit({
+      cwd: tmpRoot,
+      provider: 'lmstudio',
+      model: 'qwen2.5-7b-instruct',
+      nonInteractive: true,
+    });
+
+    const cfg = await loadProjectConfig(tmpRoot);
+    expect(cfg?.provider).toBe('lmstudio');
+    process.exitCode = 0;
+  });
+
+  it('still requires apiKey for cloud providers', async () => {
+    await runInit({
+      cwd: tmpRoot,
+      provider: 'openai',
+      model: 'gpt-4o',
+      // apiKey intentionally omitted
+      nonInteractive: true,
+    });
+    expect(process.exitCode).toBe(2);
+    process.exitCode = 0;
+  });
 });

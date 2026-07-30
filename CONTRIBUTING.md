@@ -4,8 +4,8 @@ Thanks for your interest in Codexrev! 🎉
 
 ## Ground Rules
 
-- **Original work only.** Codexrev contains no code from Google Gemini CLI, easy-llm-cli, or any other proprietary source. All contributions must be original.
-- **No vendor branding.** Never use the words "Gemini" or "easy-llm-cli" in source code, prompts, error messages, comments, docs, or tests. The only accepted name is **Codexrev** (or `codexrev` in identifiers).
+- **Original work only.** Codexrev contains no code from any proprietary source. All contributions must be original.
+- **No external branding.** Never reference external CLI tools or proprietary projects by name in source code, error messages, or user-facing prompts. Provider names (e.g. "Google Gemini") are allowed where they describe supported functionality. The project name is **Codexrev** (or `codexrev` in identifiers).
 - **Apache-2.0 license.** All contributions are licensed under Apache-2.0.
 
 ## Development Setup

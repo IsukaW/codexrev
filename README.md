@@ -19,14 +19,17 @@ model — Codexrev speaks the same fluent interface to all of them.
 
 ## Supported LLM Providers
 
-| Provider         | Adapter                       | Auth                                |
-| ---------------- | ----------------------------- | ----------------------------------- |
-| **OpenAI**       | `openai` SDK                  | `OPENAI_API_KEY`                    |
-| **Anthropic**    | `@anthropic-ai/sdk`            | `ANTHROPIC_API_KEY`                 |
-| **Google Gemini**| `@google/genai`               | `GOOGLE_API_KEY` / OAuth            |
-| **LiteLLM**      | OpenAI-compatible endpoint    | `LITELLM_API_KEY` + base URL        |
+| Provider         | Vendor ID          | Auth                                |
+| ---------------- | ------------------ | ----------------------------------- |
+| **OpenAI**       | `openai`           | `OPENAI_API_KEY`                    |
+| **Anthropic**    | `anthropic`        | `ANTHROPIC_API_KEY`                 |
+| **Google Gemini**| `google`           | `GOOGLE_API_KEY` / OAuth            |
+| **Ollama**       | `ollama`           | *(none — runs locally)*             |
+| **LM Studio**    | `lmstudio`         | *(none — runs locally)*             |
+| **LiteLLM**      | `litellm`          | `LITELLM_API_KEY` + base URL        |
+| **Custom**       | `customendpoint`   | varies (any OpenAI-compatible API)  |
 
-Switch with a single env var: `CODEXREV_PROVIDER=anthropic`.
+Switch with a single env var: `CODEXREV_PROVIDER=anthropic`. Or register multiple providers and models with `codexrev models add`.
 
 ## Quick Start
 
@@ -36,6 +39,9 @@ npm install -g codexrev
 
 # Or run directly with npx
 npx codexrev
+
+# Add a provider and model interactively
+codexrev models add
 
 # Inside the CLI
 > Write a fizzbuzz function in TypeScript and add tests for it.
@@ -48,7 +54,8 @@ Codexrev reads configuration from (in increasing priority):
 1. Built-in defaults
 2. `~/.codexrev/settings.json` (user)
 3. `.codexrev/settings.json` (project)
-4. Environment variables prefixed with `CODEXREV_`
+4. `.codexrev/config.json` (project encrypted config — providers, models, API keys)
+5. Environment variables prefixed with `CODEXREV_`
 
 ```jsonc
 // ~/.codexrev/settings.json
@@ -62,9 +69,11 @@ Codexrev reads configuration from (in increasing priority):
 }
 ```
 
+Use `codexrev models add` to interactively manage providers and models in `.codexrev/config.json`.
+
 ## Features
 
-- 🤖 **Multi-provider** — OpenAI, Anthropic, Google Gemini, LiteLLM with a unified interface
+- 🤖 **Multi-provider** — OpenAI, Anthropic, Google Gemini, Ollama, LM Studio, LiteLLM, and custom endpoints with a unified interface
 - 🛠️ **Built-in tools** — read_file, write_file, edit, shell, glob, grep, web_fetch, web_search
 - 🔌 **MCP support** — plug in any Model Context Protocol server (stdio, SSE, streamable-HTTP)
 - 🖥️ **Rich TUI** — React + Ink terminal UI with syntax highlighting, themes, and slash commands
@@ -73,6 +82,7 @@ Codexrev reads configuration from (in increasing priority):
 - 📊 **Telemetry** — OpenTelemetry OTLP/gRPC export with local or GCP targets
 - 🧩 **Extensions** — load community plugins via `codexrev-extension.json`
 - 📦 **Programmatic API** — embed Codexrev in your own Node.js apps (ESM + CJS)
+- 🧭 **Models wizard** — interactive `codexrev models add` to register providers and models with encrypted API key storage
 
 ## Slash Commands
 
@@ -115,6 +125,5 @@ Apache-2.0 — see [LICENSE](LICENSE).
 
 ## Branding
 
-Codexrev is an independent, original implementation. It contains **no code** from
-the Google Gemini CLI, the easy-llm-cli project, or any other proprietary source.
-All trademarks belong to their respective owners.
+Codexrev is an independent, original implementation. It contains no code from
+any proprietary source. All trademarks belong to their respective owners.

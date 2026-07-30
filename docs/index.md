@@ -4,14 +4,18 @@
 
 ## Highlights
 
-- **Multiple LLM providers**: OpenAI, Anthropic, Google Gemini, and any OpenAI-compatible endpoint (LiteLLM, vLLM, etc.).
+- **Multiple LLM providers**: OpenAI, Anthropic, Google Gemini, Ollama, LM Studio, LiteLLM, and any custom endpoint via the interactive `codexrev models add` wizard.
+- **Three interaction modes**: Ask (read-only Q&A), Plan (generate a plan without executing), Agent (full pipeline with implementation and verification). Switch instantly with Tab.
+- **Multi-agent pipeline**: In Agent mode, a three-phase pipeline — Committee (analysis) → Breaker-Builder (implementation) → Resolver (verification) — ensures careful, verified changes.
+- **Automatic fix loop**: When verification fails, the fix loop retries up to a configurable number of attempts, asking you to continue or stop at each iteration.
+- **Clarification Q&A**: The agent can pause mid-run to ask you questions when something is ambiguous. Respond with a quick-select suggestion or type your own answer.
 - **Agent loop with tools**: A single user prompt may trigger dozens of model turns, tool calls, and re-prompts until the model emits `stop`.
-- **Built-in tools**: `shell`, `read_file`, `write_file`, `edit`, `glob`, `grep`, `web_fetch`, `web_search`.
+- **Built-in tools**: `shell`, `read_file`, `write_file`, `edit`, `glob`, `grep`, `web_fetch`, `web_search`, `ask_user`.
 - **MCP integration**: Talk to Model Context Protocol servers over stdio, SSE, or streamable-HTTP transports.
 - **Plugin / extension system**: Drop a folder under `~/.codexrev/extensions/<name>/` containing a `codexrev-extension.json` manifest and Codexrev picks it up.
 - **Sandboxed shell execution**: macOS Seatbelt, Docker containers, Podman containers, or passthrough.
 - **Point-in-time checkpoints**: Snapshot files the agent has touched and rewind later.
-- **Interactive TUI**: React + Ink terminal UI with streaming responses and slash commands.
+- **Interactive TUI**: React + Ink terminal UI with streaming responses, slash commands, and mode switching.
 - **Non-interactive mode**: `codexrev --print "fix the bug" --output-format stream-json` for scripting and CI.
 - **Programmatic API**: `import { createAgent, runAgent, buildProvider, ... } from 'codexrev'`.
 
@@ -21,7 +25,10 @@
 # Install (after running `npm run build` in this repo)
 npm install -g .
 
-# Set at least one provider's API key
+# Add a provider and model interactively (recommended)
+codexrev models add
+
+# Or set a provider key manually
 export OPENAI_API_KEY=sk-...
 # or
 export ANTHROPIC_API_KEY=sk-ant-...
@@ -38,11 +45,11 @@ codexrev --print "summarize the README" --model gpt-4o-mini
 ## Documentation map
 
 ### CLI
-- [Commands](cli/commands.md) — every subcommand and flag
-- [Configuration](cli/configuration.md) — settings, env vars, layering
+- [Commands](cli/commands.md) — every subcommand, flag, slash command, and mode
+- [Configuration](cli/configuration.md) — settings, env vars, layering, mode settings
 - [Authentication](cli/authentication.md) — provider keys and OAuth
 - [Themes](cli/themes.md) — color schemes
-- [Tutorials](cli/tutorials.md) — walkthroughs
+- [Tutorials](cli/tutorials.md) — walkthroughs (including Plan → Agent workflow)
 
 ### Core
 - [Architecture](core/architecture.md) — providers, agent loop, tools, MCP

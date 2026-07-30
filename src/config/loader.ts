@@ -5,7 +5,8 @@
  *   1. DEFAULT_SETTINGS
  *   2. ~/.codexrev/settings.json  (user)
  *   3. .codexrev/settings.json    (project, walking up from cwd)
- *   4. environment variables
+ *   4. encrypted project config (.codexrev/config.json)
+ *   5. environment variables
  */
 
 import { promises as fs } from 'node:fs';
@@ -16,11 +17,14 @@ import { findProjectConfig, getCodexrevPaths } from '../utils/paths.js';
 import { ENV } from '../utils/env.js';
 import { ConfigError } from '../utils/errors.js';
 import type { ProviderId } from '../core/types.js';
+import type { InteractionMode } from '../core/modes.js';
+import type { VerificationMode } from '../core/verification.js';
 import { decrypt } from '../security/secrets.js';
 import { getDek, isAvailable as keychainAvailable } from '../security/keychain.js';
 import { loadProjectConfig, projectConfigPath } from './projectConfig.js';
+import { PROVIDER_IDS } from '../providers/registry.js';
 
-const VALID_PROVIDERS: ReadonlyArray<ProviderId> = ['openai', 'anthropic', 'google', 'litellm'];
+const VALID_PROVIDERS: ReadonlyArray<ProviderId> = PROVIDER_IDS;
 
 function isPlainObject(x: unknown): x is Record<string, unknown> {
   return typeof x === 'object' && x !== null && !Array.isArray(x);
@@ -82,6 +86,21 @@ function applyEnvOverrides(s: Settings): Settings {
   }
   if (process.env.CODEXREV_CHECKPOINTING) {
     next.checkpointing = process.env.CODEXREV_CHECKPOINTING === 'true';
+  }
+  if (process.env.CODEXREV_DEFAULT_MODE) {
+    const m = process.env.CODEXREV_DEFAULT_MODE.toLowerCase();
+    if (['ask', 'plan', 'agent'].includes(m)) {
+      next.defaultMode = m as InteractionMode;
+    }
+  }
+  if (process.env.CODEXREV_MAX_FIX_ATTEMPTS) {
+    next.maxFixAttempts = parseInt(process.env.CODEXREV_MAX_FIX_ATTEMPTS, 10);
+  }
+  if (process.env.CODEXREV_VERIFICATION_MODE) {
+    const vm = process.env.CODEXREV_VERIFICATION_MODE.toLowerCase();
+    if (['tests', 'llm', 'auto'].includes(vm)) {
+      next.verificationMode = vm as VerificationMode;
+    }
   }
   return next;
 }
@@ -180,6 +199,37 @@ async function mergeProjectConfig(merged: Settings, cwd: string): Promise<Settin
     );
   }
 
+  // New: providers array with per-provider API keys and model configs
+  if (projectCfg.providers && projectCfg.providers.length > 0) {
+    const { getActiveModel } = await import('./models.js');
+    const active = getActiveModel(projectCfg.providers);
+    if (active) {
+      const { provider, model } = active;
+      let providerApiKey: string | undefined;
+      if (provider.apiKey) {
+        try { providerApiKey = decrypt(provider.apiKey, dek); }
+        catch (err) {
+          throw new ConfigError(
+            `failed to decrypt API key for provider '${provider.name}': ${(err as Error).message}. ` +
+            `Run \`codexrev init --reset\` to re-seal.`,
+          );
+        }
+      }
+      const providerId = vendorToProviderId(provider.vendor);
+      const providers = { ...merged.providers };
+      providers[providerId] = {
+        ...(providers[providerId] ?? { provider: providerId, model: model.id }),
+        provider: providerId,
+        model: model.id,
+        ...(providerApiKey !== undefined ? { apiKey: providerApiKey } : {}),
+        ...(provider.baseUrl ?? model.url ? { baseUrl: model.url ?? provider.baseUrl } : {}),
+        ...(model.maxOutputTokens !== undefined ? { maxOutputTokens: model.maxOutputTokens } : {}),
+      };
+      return { ...merged, provider: providerId, model: model.id, providers };
+    }
+  }
+
+  // Legacy: single API key path
   const providers = { ...merged.providers };
   providers[projectCfg.provider] = {
     ...(providers[projectCfg.provider] ?? { provider: projectCfg.provider, model: projectCfg.model }),
@@ -192,12 +242,16 @@ async function mergeProjectConfig(merged: Settings, cwd: string): Promise<Settin
     ...(projectCfg.topP !== undefined ? { topP: projectCfg.topP } : {}),
   };
 
-  return {
-    ...merged,
-    provider: projectCfg.provider,
-    model: projectCfg.model,
-    providers,
+  return { ...merged, provider: projectCfg.provider, model: projectCfg.model, providers };
+}
+
+function vendorToProviderId(vendor: string): ProviderId {
+  const map: Record<string, ProviderId> = {
+    openai: 'openai', anthropic: 'anthropic', google: 'google',
+    ollama: 'ollama', lmstudio: 'lmstudio', litellm: 'litellm',
+    customendpoint: 'openai',
   };
+  return map[vendor] ?? 'openai';
 }
 
 /** Save the user's settings file. Creates parent directories as needed. */

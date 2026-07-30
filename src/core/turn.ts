@@ -28,7 +28,12 @@ export type AgentEvent =
   | { kind: 'tool_result'; toolResult: ToolResultPart }
   | { kind: 'usage'; usage: UsageStats }
   | { kind: 'turn_complete'; turns: number; reason: string }
-  | { kind: 'error'; error: ProviderError };
+  | { kind: 'error'; error: ProviderError }
+  // ── Pipeline & fix-loop events ────────────────────────────────
+  | { kind: 'pipeline_phase'; phase: 'committee' | 'breaker-builder' | 'resolver'; description: string }
+  | { kind: 'fix_iteration'; attempt: number; maxAttempts: number; status: 'red' | 'green' | 'checking'; summary: string }
+  | { kind: 'clarification_prompt'; question: string; suggestions: readonly string[] }
+  | { kind: 'clarification_response'; answer: string };
 
 export interface AgentResult {
   finalText: string;
@@ -46,17 +51,29 @@ export interface RunAgentOptions {
   settings: Settings;
   stream: boolean;
   signal?: AbortSignal;
+  /** Extra system-prompt text appended for the current mode. */
+  systemPromptSuffix?: string;
+  /** Override the default system instruction entirely (used by pipeline phases). */
+  systemInstructionOverride?: string;
+  /**
+   * Prior conversation messages to prepend as context.
+   * Used when switching modes (e.g. Plan → Agent) so the agent
+   * can see what was discussed / planned in the previous mode.
+   */
+  contextMessages?: Message[];
 }
 
 /** Build a system instruction that includes the current working directory. */
-function buildSystemInstruction(settings: Settings): string {
-  return [
+function buildSystemInstruction(settings: Settings, suffix?: string): string {
+  const parts = [
     'You are Codexrev, a multi-provider agentic CLI assistant.',
     `Working directory: ${process.cwd()}`,
     `Provider: ${settings.provider}`,
     `Model: ${settings.model}`,
     'When you need to use tools, prefer the most specific tool. If the user has not yet approved a destructive action, ask for confirmation.',
-  ].join('\n');
+  ];
+  if (suffix) parts.push(suffix);
+  return parts.join('\n');
 }
 
 async function executeToolCall(
@@ -110,9 +127,13 @@ async function collectAgent(opts: RunAgentOptions): Promise<AgentResult> {
 }
 
 async function* streamAgent(opts: RunAgentOptions): AsyncIterable<AgentEvent> {
-  const { prompt, provider, tools, mcp, settings, signal } = opts;
-  const messages: Message[] = [{ role: 'user', parts: [{ kind: 'text', text: prompt }] }];
-  const systemInstruction = buildSystemInstruction(settings);
+  const { prompt, provider, tools, mcp, settings, signal, systemPromptSuffix, systemInstructionOverride, contextMessages } = opts;
+  // Prepend any prior conversation context, then add the current user prompt
+  const messages: Message[] = [
+    ...(contextMessages ?? []),
+    { role: 'user', parts: [{ kind: 'text', text: prompt }] },
+  ];
+  const systemInstruction = systemInstructionOverride ?? buildSystemInstruction(settings, systemPromptSuffix);
 
   // Aggregate tool declarations from builtins + MCP
   const toolDecls = [

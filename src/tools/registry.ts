@@ -9,6 +9,8 @@
 import type { ToolDeclaration, ToolParameters } from '../core/types.js';
 import type { Settings } from '../config/schema.js';
 import { builtinTools } from './builtin.js';
+import { createAskUserTool } from './askUser.js';
+import type { InteractionChannel } from '../core/interaction.js';
 
 export interface ToolContext {
   cwd: string;
@@ -60,10 +62,16 @@ export class ToolRegistry {
 }
 
 /** Build a registry pre-populated with the built-in tools. */
-export async function createToolRegistry(settings: Settings): Promise<Map<string, Tool>> {
+export async function createToolRegistry(
+  settings: Settings,
+  interactionChannel?: InteractionChannel,
+): Promise<Map<string, Tool>> {
   const reg = new ToolRegistry();
   for (const t of builtinTools(settings)) {
     reg.register(t);
+  }
+  if (interactionChannel) {
+    reg.register(createAskUserTool(interactionChannel));
   }
   return reg.asMap();
 }

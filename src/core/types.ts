@@ -11,7 +11,7 @@
 export type Role = 'system' | 'user' | 'assistant' | 'tool';
 
 /** Supported LLM providers. */
-export type ProviderId = 'openai' | 'anthropic' | 'google' | 'litellm';
+export type ProviderId = 'openai' | 'anthropic' | 'google' | 'litellm' | 'ollama' | 'lmstudio';
 
 /** Text content part. */
 export interface TextPart {
@@ -135,8 +135,22 @@ export interface GenerateResponse {
 /** The unified interface every LLM provider must implement. */
 export interface ContentGenerator {
   readonly provider: ProviderId;
+  readonly capabilities: ProviderCapabilities;
   generate(req: GenerateRequest): Promise<GenerateResponse>;
   stream(req: GenerateRequest): AsyncIterable<StreamEvent>;
+}
+
+/**
+ * Self-describing capabilities advertised by a `ContentGenerator`.
+ * Embedders and the agent loop can use these to degrade gracefully
+ * (e.g. don't promise token-usage accounting for adapters that
+ * can't report it).
+ */
+export interface ProviderCapabilities {
+  /** Whether the provider accepts `tools` declarations. */
+  readonly supportsTools: boolean;
+  /** Whether the provider populates `usage` on streaming `finish` events. */
+  readonly supportsStreamingUsage: boolean;
 }
 
 /** Configuration for instantiating a ContentGenerator. */
