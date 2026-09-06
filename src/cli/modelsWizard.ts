@@ -11,9 +11,14 @@ import { ModelsWizard } from '../ui/ModelsWizard.js';
 import type { ModelWizardResult } from '../ui/ModelsWizard.js';
 import { listProviders, addProvider, setProviderApiKey, addModel } from '../config/models.js';
 import type { ProviderConfigEntry } from '../config/models.js';
+import { loadProjectConfig } from '../config/projectConfig.js';
 import { getDek, setDek } from '../security/keychain.js';
-import { generateDek, encrypt } from '../security/secrets.js';
+import { generateDek } from '../security/secrets.js';
+import { DEFAULT_LOCAL_TIMEOUT_MS } from '../providers/registry.js';
 import { ConfigError } from '../utils/errors.js';
+
+/** Vendors that run as a local server rather than a hosted API. */
+const LOCAL_VENDORS = new Set(['ollama', 'lmstudio', 'litellm']);
 
 export async function runModelsWizard(cwd: string): Promise<void> {
   // Load existing providers for the wizard to display.
@@ -59,6 +64,12 @@ export async function runModelsWizard(cwd: string): Promise<void> {
   const providerName = result.newProvider
     ? result.newProvider.name
     : result.existingProvider!;
+  const vendor = result.newProvider
+    ? result.newProvider.vendor
+    : existingProviders.find((p) => p.name === providerName)?.vendor;
+  // Local model servers get a generous request timeout automatically —
+  // no wizard step needed, same rationale as `codexrev init`.
+  const timeoutMs = vendor && LOCAL_VENDORS.has(vendor) ? DEFAULT_LOCAL_TIMEOUT_MS : undefined;
 
   try {
     const saved = await addModel(cwd, providerName, {
@@ -69,6 +80,7 @@ export async function runModelsWizard(cwd: string): Promise<void> {
       vision: result.model.vision,
       maxInputTokens: result.model.maxInputTokens,
       maxOutputTokens: result.model.maxOutputTokens,
+      timeoutMs,
     });
 
     const caps: string[] = [];
@@ -81,6 +93,22 @@ export async function runModelsWizard(cwd: string): Promise<void> {
 
     console.log(`✓ Added model '${saved.id}' to provider '${providerName}'${saved.default ? ' (active)' : ''}`);
     if (capStr || tokens) console.log(`  ${capStr}${tokens}`);
+
+    // Warn when a model is added to a cloud provider that has no API key
+    // — the key is tied to the provider, not the model, so it must be set
+    // on the provider for any of its models to work.
+    const providersNow = await listProviders(cwd).catch(() => []);
+    const target = providersNow.find((p) => p.name === providerName);
+    if (target && !target.apiKey && !LOCAL_VENDORS.has(target.vendor)) {
+      const cfg = await loadProjectConfig(cwd).catch(() => null);
+      const hasLegacyKey = !!cfg?.apiKey && cfg.provider === providerName;
+      if (!hasLegacyKey) {
+        console.log(
+          `  ⚠ Provider '${providerName}' has no API key. Set one with:\n` +
+          `      codexrev models key ${providerName}`,
+        );
+      }
+    }
   } catch (err) {
     if (err instanceof ConfigError) {
       console.error(`Error: ${err.message}`);

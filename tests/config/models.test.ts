@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { listProviders, addProvider, removeProvider, addModel, removeModel, setDefaultModel, getActiveModel } from '../../src/config/models.js';
+import { listProviders, addProvider, removeProvider, addModel, removeModel, setDefaultModel, getActiveModel, normalizeDefaults } from '../../src/config/models.js';
 import { saveProjectConfig } from '../../src/config/projectConfig.js';
 import { _resetFakeStore, setDek } from '../../src/security/keychain.js';
 import { generateDek } from '../../src/security/secrets.js';
@@ -199,6 +199,63 @@ describe('setDefaultModel', () => {
     await saveProjectConfig(tmpRoot, baseCfg());
     await addProvider(tmpRoot, { name: 'ds', vendor: 'customendpoint' });
     await expect(setDefaultModel(tmpRoot, 'ds', 'nope')).rejects.toThrow(/not found/);
+  });
+});
+
+describe('global default marker', () => {
+  it('a new provider\'s first model is NOT default when another provider already has one', async () => {
+    await saveProjectConfig(tmpRoot, baseCfg());
+    await addProvider(tmpRoot, { name: 'p1', vendor: 'ollama' });
+    await addModel(tmpRoot, 'p1', { id: 'a', name: 'a' });
+    await addProvider(tmpRoot, { name: 'p2', vendor: 'ollama' });
+    const second = await addModel(tmpRoot, 'p2', { id: 'b', name: 'b' });
+    expect(second.default).toBe(false);
+
+    const providers = await listProviders(tmpRoot);
+    const defaults = providers.flatMap((p) => p.models).filter((m) => m.default);
+    expect(defaults).toHaveLength(1);
+    expect(defaults[0].id).toBe('a');
+  });
+
+  it('setDefaultModel clears the marker in OTHER providers too', async () => {
+    await saveProjectConfig(tmpRoot, baseCfg());
+    await addProvider(tmpRoot, { name: 'p1', vendor: 'ollama' });
+    await addModel(tmpRoot, 'p1', { id: 'a', name: 'a' });
+    await addProvider(tmpRoot, { name: 'p2', vendor: 'ollama' });
+    await addModel(tmpRoot, 'p2', { id: 'b', name: 'b' });
+
+    await setDefaultModel(tmpRoot, 'p2', 'b');
+
+    const providers = await listProviders(tmpRoot);
+    const defaults = providers.flatMap((p) => p.models).filter((m) => m.default);
+    expect(defaults).toHaveLength(1);
+    expect(defaults[0].id).toBe('b');
+  });
+
+  it('listProviders heals a config with two default:true entries', async () => {
+    await saveProjectConfig(
+      tmpRoot,
+      baseCfg({
+        providers: [
+          { name: 'p1', vendor: 'ollama', models: [{ id: 'a', name: 'a', default: true }] },
+          { name: 'p2', vendor: 'ollama', models: [{ id: 'b', name: 'b', default: true }] },
+        ],
+      }),
+    );
+    const providers = await listProviders(tmpRoot);
+    const defaults = providers.flatMap((p) => p.models).filter((m) => m.default);
+    expect(defaults).toHaveLength(1);
+    expect(defaults[0].id).toBe('a'); // first in registry order wins
+  });
+
+  it('normalizeDefaults promotes the first model when none is marked', () => {
+    const providers = [
+      { name: 'p1', vendor: 'ollama' as const, models: [{ id: 'a', name: 'a' }, { id: 'b', name: 'b' }] },
+    ];
+    expect(normalizeDefaults(providers)).toBe(true);
+    expect(providers[0].models[0].default).toBe(true);
+    expect(providers[0].models[1].default).toBe(false);
+    expect(normalizeDefaults(providers)).toBe(false); // idempotent
   });
 });
 

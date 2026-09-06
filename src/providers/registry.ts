@@ -17,6 +17,16 @@
 
 import type { ProviderId } from '../core/types.js';
 
+/**
+ * Per-request client timeout applied automatically to local model servers
+ * (Ollama, LM Studio, LiteLLM) when the user doesn't set one explicitly.
+ * The OpenAI SDK's own default is 10 minutes, which a larger local model
+ * on modest hardware can genuinely exceed without being stuck — this is
+ * NOT a hang-detection value, just enough slack for a slow-but-honest
+ * response. Cloud providers keep the SDK default (fast APIs, no need).
+ */
+export const DEFAULT_LOCAL_TIMEOUT_MS = 30 * 60_000;
+
 export interface ProviderMeta {
   readonly id: ProviderId;
   /** Human-readable label shown in CLI help and the init wizard. */
@@ -100,6 +110,17 @@ export const PROVIDER_REGISTRY: Readonly<Record<ProviderId, ProviderMeta>> = {
     requiresApiKey: false,
     envKeyVar: 'LMSTUDIO_API_KEY',
     envBaseUrlVar: 'LMSTUDIO_BASE_URL',
+    supportsTools: true,
+    supportsStreamingUsage: false,
+  },
+  deepseek: {
+    id: 'deepseek',
+    label: 'DeepSeek',
+    defaultBaseUrl: 'https://api.deepseek.com/v1',
+    defaultModel: 'deepseek-chat',
+    requiresApiKey: true,
+    envKeyVar: 'DEEPSEEK_API_KEY',
+    envBaseUrlVar: 'DEEPSEEK_BASE_URL',
     supportsTools: true,
     supportsStreamingUsage: false,
   },

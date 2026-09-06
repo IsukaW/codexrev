@@ -13,7 +13,12 @@ import React, { useState, useCallback } from 'react';
 import { Box, Text, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
 import TextInput from 'ink-text-input';
-import type { ClarificationRequest, FixConfirmRequest } from '../core/interaction.js';
+import type {
+  ClarificationRequest,
+  FixConfirmRequest,
+  ApprovalRequest,
+  ApprovalDecision,
+} from '../core/interaction.js';
 
 // ── Clarification Prompt ──────────────────────────────────────────
 
@@ -126,6 +131,37 @@ export const FixConfirmPrompt: React.FC<FixConfirmPromptProps> = ({
       <Box marginTop={1} />
       <Text dimColor>What would you like to do?</Text>
       <SelectInput items={fixConfirmItems} onSelect={handleSelect} />
+    </Box>
+  );
+};
+
+// ── Tool Approval Prompt ─────────────────────────────────────────
+
+interface ApprovalPromptProps {
+  request: ApprovalRequest;
+  onDecision: (decision: ApprovalDecision) => void;
+}
+
+const approvalItems = [
+  { label: '✔ Approve once', value: 'approve' as const },
+  { label: '✔✔ Approve for the rest of this session', value: 'approve-session' as const },
+  { label: '✗ Deny', value: 'deny' as const },
+];
+
+export const ApprovalPrompt: React.FC<ApprovalPromptProps> = ({ request, onDecision }) => {
+  const handleSelect = useCallback(
+    (item: { value: ApprovalDecision }) => onDecision(item.value),
+    [onDecision],
+  );
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor="magenta" paddingX={1} marginY={1}>
+      <Text bold color="magenta">
+        🔐 Approval required — {request.toolName}
+      </Text>
+      <Text>{request.summary}</Text>
+      <Box marginTop={1} />
+      <SelectInput items={approvalItems} onSelect={handleSelect} />
+      <Text dimColor>Tip: toggle Bypass ALL approvals in the Control Panel (Ctrl+S) to skip these.</Text>
     </Box>
   );
 };

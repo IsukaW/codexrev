@@ -19,12 +19,19 @@ export interface ModelConfig {
   vision?: boolean;
   maxInputTokens?: number;
   maxOutputTokens?: number;
+  /**
+   * Per-request client timeout (ms). Auto-set for local vendors (Ollama,
+   * LM Studio, LiteLLM) at add-time — see `DEFAULT_LOCAL_TIMEOUT_MS` in
+   * `providers/registry.ts`. Undefined leaves the SDK's own default
+   * (10 min) untouched, which is fine for cloud APIs.
+   */
+  timeoutMs?: number;
   default?: boolean;
 }
 
 export interface ProviderConfigEntry {
   name: string;
-  vendor: 'openai' | 'anthropic' | 'google' | 'ollama' | 'lmstudio' | 'litellm' | 'customendpoint';
+  vendor: 'openai' | 'anthropic' | 'google' | 'ollama' | 'lmstudio' | 'litellm' | 'deepseek' | 'customendpoint';
   apiKey?: EncryptedPayload;
   baseUrl?: string;
   apiType?: 'chat-completions' | 'messages' | 'generateContent';
@@ -39,7 +46,12 @@ export interface ProjectConfig {
   maxOutputTokens?: number;
   temperature?: number;
   topP?: number;
-  apiKey: EncryptedPayload;
+  /**
+   * Legacy top-level sealed API key. Optional: when `providers[]` is
+   * populated, each provider entry owns its own key and this is omitted.
+   * Still written by configs that predate the multi-provider registry.
+   */
+  apiKey?: EncryptedPayload;
   createdAt: string;
   updatedAt: string;
   providers?: ProviderConfigEntry[];

@@ -65,6 +65,7 @@ const VENDOR_CHOICES: Array<{ label: string; value: VendorType }> = [
   { label: 'ollama — Ollama (local)', value: 'ollama' },
   { label: 'lmstudio — LM Studio (local)', value: 'lmstudio' },
   { label: 'litellm — LiteLLM', value: 'litellm' },
+  { label: 'deepseek — DeepSeek', value: 'deepseek' },
   { label: 'customendpoint — Custom OpenAI-compatible', value: 'customendpoint' },
 ];
 
@@ -76,6 +77,7 @@ const VENDOR_LABELS: Record<VendorType, string> = {
   ollama: 'Ollama',
   lmstudio: 'LM Studio',
   litellm: 'LiteLLM',
+  deepseek: 'DeepSeek',
   customendpoint: 'Custom Endpoint',
 };
 

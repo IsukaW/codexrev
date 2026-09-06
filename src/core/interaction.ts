@@ -25,9 +25,46 @@ export interface FixConfirmRequest {
   readonly status: 'red' | 'green' | 'checking';
 }
 
+/**
+ * A pending approval gate shown after one stage of a multi-stage
+ * pipeline finishes (e.g. Feature 2's review pipeline, after every
+ * role). Deliberately generic — no Feature-2-specific `Finding[]` shape
+ * here, so this stays usable by any future multi-stage pipeline; the
+ * caller that owns the richer payload (e.g. the review CLI) renders
+ * "Details" itself from data it already has, rather than round-tripping
+ * it through this channel.
+ */
+export interface StageGateRequest {
+  readonly id: string;
+  /** Machine identifier for the stage that just finished (e.g. a RoleId). */
+  readonly stage: string;
+  /** Human-readable label for the stage (e.g. "Business Analyst"). */
+  readonly stageLabel: string;
+  /** Short outcome label for the stage (e.g. "pass" | "flag" | "block"). */
+  readonly status: string;
+  readonly summary: string;
+}
+
+/** Decision from a `StageGateRequest`. 'details' re-prompts after the caller shows more info. */
+export type StageGateDecision = 'continue' | 'details' | 'skip' | 'abort';
+
+/** A pending tool-execution approval gate (shell / write_file / edit). */
+export interface ApprovalRequest {
+  readonly id: string;
+  /** Tool being invoked, e.g. "shell". */
+  readonly toolName: string;
+  /** Human-readable one-line description of what will run. */
+  readonly summary: string;
+}
+
+/** Decision from an `ApprovalRequest`. */
+export type ApprovalDecision = 'approve' | 'approve-session' | 'deny';
+
 export type InteractionEvent =
   | { type: 'clarification_request'; request: ClarificationRequest }
   | { type: 'fix_confirm_request'; request: FixConfirmRequest }
+  | { type: 'stage_gate_request'; request: StageGateRequest }
+  | { type: 'approval_request'; request: ApprovalRequest }
   | { type: 'abort' };
 
 /**
@@ -96,6 +133,64 @@ export class InteractionChannel {
     });
   }
 
+  /**
+   * Ask the user to continue/see details/skip the rest/abort after one
+   * pipeline stage finishes. Blocks until answered. On 'details' the
+   * caller is expected to render more info and call this again for the
+   * same stage — this method itself does not loop.
+   */
+  requestStageGate(
+    stage: string,
+    stageLabel: string,
+    status: string,
+    summary: string,
+  ): Promise<StageGateDecision> {
+    if (this.aborted) return Promise.reject(new Error('interaction aborted'));
+
+    const id = String(this.nextId++);
+    const request: StageGateRequest = { id, stage, stageLabel, status, summary };
+
+    return new Promise<StageGateDecision>((resolve) => {
+      const handler = (response: { id: string; decision: StageGateDecision }) => {
+        if (response.id === id) {
+          this.emitter.off('stage_gate_response', handler);
+          resolve(response.decision);
+        }
+      };
+      this.emitter.on('stage_gate_response', handler);
+      this.emitter.emit('interaction', {
+        type: 'stage_gate_request',
+        request,
+      } satisfies InteractionEvent);
+    });
+  }
+
+  /**
+   * Ask the user to approve a single tool invocation. Blocks until the
+   * UI responds. Returns the raw decision so the caller can implement
+   * "approve for the rest of this session".
+   */
+  requestApproval(toolName: string, summary: string): Promise<ApprovalDecision> {
+    if (this.aborted) return Promise.resolve('deny');
+
+    const id = String(this.nextId++);
+    const request: ApprovalRequest = { id, toolName, summary };
+
+    return new Promise<ApprovalDecision>((resolve) => {
+      const handler = (response: { id: string; decision: ApprovalDecision }) => {
+        if (response.id === id) {
+          this.emitter.off('approval_response', handler);
+          resolve(response.decision);
+        }
+      };
+      this.emitter.on('approval_response', handler);
+      this.emitter.emit('interaction', {
+        type: 'approval_request',
+        request,
+      } satisfies InteractionEvent);
+    });
+  }
+
   // ── UI side (consumer) ──────────────────────────────────────────
 
   /** Subscribe to interaction events from the pipeline. */
@@ -112,6 +207,16 @@ export class InteractionChannel {
   /** Send a fix-confirm decision back to the pipeline. */
   respondFixConfirmation(id: string, decision: 'continue' | 'stop'): void {
     this.emitter.emit('fix_confirm_response', { id, decision });
+  }
+
+  /** Send a stage-gate decision back to the pipeline. */
+  respondStageGate(id: string, decision: StageGateDecision): void {
+    this.emitter.emit('stage_gate_response', { id, decision });
+  }
+
+  /** Send a tool-approval decision back to the agent loop. */
+  respondApproval(id: string, decision: ApprovalDecision): void {
+    this.emitter.emit('approval_response', { id, decision });
   }
 
   /** Abort all pending requests. Promises reject with an Error. */

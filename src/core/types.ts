@@ -11,7 +11,14 @@
 export type Role = 'system' | 'user' | 'assistant' | 'tool';
 
 /** Supported LLM providers. */
-export type ProviderId = 'openai' | 'anthropic' | 'google' | 'litellm' | 'ollama' | 'lmstudio';
+export type ProviderId =
+  | 'openai'
+  | 'anthropic'
+  | 'google'
+  | 'litellm'
+  | 'ollama'
+  | 'lmstudio'
+  | 'deepseek';
 
 /** Text content part. */
 export interface TextPart {
@@ -41,6 +48,8 @@ export interface ToolResultPart {
   readonly name: string;
   readonly content: Array<TextPart | BlobPart>;
   readonly isError?: boolean;
+  /** Optional structured metadata surfaced to the UI (e.g. sandbox exec stats). */
+  readonly metadata?: Record<string, unknown>;
 }
 
 /** Discriminated union of all content parts. */
@@ -162,6 +171,16 @@ export interface ContentGeneratorConfig {
   readonly maxOutputTokens?: number;
   readonly temperature?: number;
   readonly topP?: number;
+  /**
+   * Per-request client timeout (ms), overriding the OpenAI-compat SDK's
+   * fixed 10-minute default. Local models (Ollama/LM Studio — an
+   * explicit "local/offline" requirement) can genuinely take longer
+   * than that on modest hardware, especially a large model under load
+   * or thermal throttling; without this, a slow-but-working request is
+   * indistinguishable from a hung one and gets killed either way.
+   * Undefined leaves the SDK's own default untouched.
+   */
+  readonly timeoutMs?: number;
   /** Provider-specific extras (kept open for forward-compat). */
   readonly extras?: Readonly<Record<string, unknown>>;
 }

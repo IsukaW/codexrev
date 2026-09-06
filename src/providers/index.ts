@@ -16,6 +16,7 @@ import { GoogleGenerator } from './google.js';
 import { LiteLLMGenerator } from './litellm.js';
 import { OllamaGenerator } from './ollama.js';
 import { LMStudioGenerator } from './lmstudio.js';
+import { DeepSeekGenerator } from './deepseek.js';
 import { providerMeta } from './registry.js';
 
 export interface ProviderHandle {
@@ -53,6 +54,7 @@ function buildConfig(settings: Settings): ContentGeneratorConfig {
     maxOutputTokens: settings.maxOutputTokens,
     temperature: settings.temperature,
     topP: settings.topP,
+    timeoutMs: ps.timeoutMs,
   };
 }
 
@@ -83,6 +85,8 @@ export function buildProvider(settings: Settings): ContentGenerator {
       return new OllamaGenerator(cfg);
     case 'lmstudio':
       return new LMStudioGenerator(cfg);
+    case 'deepseek':
+      return new DeepSeekGenerator(cfg);
     default: {
       const exhaustive: never = cfg.provider;
       throw new Error(`unknown provider: ${String(exhaustive)}`);

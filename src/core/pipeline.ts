@@ -157,6 +157,7 @@ async function* runBreakerBuilder(
     signal: opts.signal,
     systemInstructionOverride: BREAKER_BUILDER_PROMPT,
     contextMessages: opts.contextMessages,
+    interactionChannel: opts.interactionChannel,
   })) {
     if (ev.kind === 'text_delta') implementation += ev.text;
     if (ev.kind !== 'pipeline_phase' && ev.kind !== 'fix_iteration') {

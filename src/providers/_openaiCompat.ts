@@ -61,6 +61,10 @@ export abstract class OpenAICompatGenerator implements ContentGenerator {
       apiKey: cfg.apiKey ?? opts.defaultApiKey,
       baseURL: cfg.baseUrl ?? opts.defaultBaseUrl,
       maxRetries: opts.maxRetries ?? 2,
+      // `timeout: undefined` lets the SDK's own default (10 min) apply,
+      // same as before this field existed — see ContentGeneratorConfig's
+      // docstring for why a slow local model needs to override it.
+      timeout: cfg.timeoutMs,
     });
   }
 

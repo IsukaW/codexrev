@@ -211,6 +211,7 @@ async function* runRetryIteration(
     signal: opts.signal,
     systemInstructionOverride: opts.systemPromptSuffix,
     contextMessages: opts.contextMessages,
+    interactionChannel: opts.interactionChannel,
   })) {
     if (ev.kind === 'text_delta') implementation += ev.text;
     if (ev.kind !== 'pipeline_phase' && ev.kind !== 'fix_iteration') {

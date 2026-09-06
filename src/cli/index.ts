@@ -24,6 +24,8 @@ import {
 import { projectConfigPath } from '../config/projectConfig.js';
 import { PROVIDER_IDS, providerMeta } from '../providers/registry.js';
 import { probeLocalProvider, resolveBaseUrlForProvider } from '../providers/health.js';
+import { reviewCommandBuilder } from '../features/review-pipeline/cli/registerReviewCommand.js';
+import { handleReviewCommand } from '../features/review-pipeline/cli/handleReviewCommand.js';
 
 interface CliArgs {
   provider?: string;
@@ -111,6 +113,20 @@ async function main(): Promise<void> {
           .option('model', { type: 'string', describe: 'Model name (provider-specific)' })
           .option('api-key', { type: 'string', describe: 'Provider API key (optional for local providers)' })
           .option('base-url', { type: 'string', describe: 'Provider base URL (optional)' })
+          .option('tool-calling', {
+            type: 'boolean',
+            describe: 'Model supports tool/function calling (default: provider capability)',
+          })
+          .option('vision', {
+            type: 'boolean',
+            describe: 'Model supports vision/image input (default: false)',
+          })
+          .option('max-input-tokens', { type: 'number', describe: 'Model context window size (optional)' })
+          .option('max-output-tokens', { type: 'number', describe: 'Model max completion tokens (optional)' })
+          .option('timeout-ms', {
+            type: 'number',
+            describe: 'Per-request client timeout in ms (default: 30 min for local providers, unset for cloud)',
+          })
           .option('reset', { type: 'boolean', default: false, describe: 'Replace existing config' })
           .option('non-interactive', {
             type: 'boolean',
@@ -137,10 +153,14 @@ async function main(): Promise<void> {
             )
             .demandCommand(1),
         )
-        .command('use <id>', 'Set active model', (y) =>
+        .command('use <id>', 'Set the active (default) model', (y) =>
           y.option('provider', { type: 'string', demandOption: true }),
+        )
+        .command('key <name>', "Set a provider's encrypted API key", (y) =>
+          y.option('api-key', { type: 'string', describe: 'API key (omit to be prompted in a TTY)' }),
         ),
     )
+    .command('review', 'Run the six-role adversarial code review pipeline', reviewCommandBuilder)
     .option('provider', {
       type: 'string',
       describe: `LLM provider: ${PROVIDER_IDS.join(' | ')}`,
@@ -200,16 +220,27 @@ async function main(): Promise<void> {
       apiKey?: string;
       apiKeyRaw?: string;
       baseUrl?: string;
+      toolCalling?: boolean;
+      vision?: boolean;
+      maxInputTokens?: number;
+      maxOutputTokens?: number;
+      timeoutMs?: number;
       reset?: boolean;
       nonInteractive?: boolean;
     };
-    // yargs converts --api-key → apiKey, --base-url → baseUrl
+    const raw = argv as Record<string, unknown>;
+    // yargs converts --api-key → apiKey, --base-url → baseUrl, etc.
     await runInit({
       cwd: process.cwd(),
       provider: flags.provider,
       model: flags.model,
-      apiKey: flags.apiKey ?? (argv as Record<string, unknown>)['api-key'] as string | undefined,
-      baseUrl: flags.baseUrl ?? (argv as Record<string, unknown>)['base-url'] as string | undefined,
+      apiKey: flags.apiKey ?? (raw['api-key'] as string | undefined),
+      baseUrl: flags.baseUrl ?? (raw['base-url'] as string | undefined),
+      toolCalling: flags.toolCalling ?? (raw['tool-calling'] as boolean | undefined),
+      vision: flags.vision ?? (raw['vision'] as boolean | undefined),
+      maxInputTokens: flags.maxInputTokens ?? (raw['max-input-tokens'] as number | undefined),
+      maxOutputTokens: flags.maxOutputTokens ?? (raw['max-output-tokens'] as number | undefined),
+      timeoutMs: flags.timeoutMs ?? (raw['timeout-ms'] as number | undefined),
       reset: !!flags.reset,
       nonInteractive: !!flags.nonInteractive || !process.stdout.isTTY,
     });
@@ -245,6 +276,20 @@ async function main(): Promise<void> {
     if (argv.name) positional.push(String(argv.name));
     if (argv.id) positional.push(String(argv.id));
     await handleModelsCommand(sub, positional, modelsFlags);
+    return;
+  }
+
+  if (argv._.includes('review')) {
+    const rest = argv._.slice(argv._.indexOf('review') + 1);
+    await handleReviewCommand(rest, {
+      diff: argv.diff as string | undefined,
+      urs: argv.urs as string | undefined,
+      output: argv.output as string | undefined,
+      fix: argv.fix as boolean | undefined,
+      // yargs converts --max-iterations → maxIterations.
+      maxIterations: (argv as Record<string, unknown>).maxIterations as number | undefined,
+      print: argv.print,
+    });
     return;
   }
 

@@ -12,7 +12,12 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import stripJsonComments from 'strip-json-comments';
-import { DEFAULT_SETTINGS, type Settings, type McpServerEntry } from './schema.js';
+import {
+  DEFAULT_SETTINGS,
+  validateReviewPipelineSettings,
+  type Settings,
+  type McpServerEntry,
+} from './schema.js';
 import { findProjectConfig, getCodexrevPaths } from '../utils/paths.js';
 import { ENV } from '../utils/env.js';
 import { ConfigError } from '../utils/errors.js';
@@ -22,7 +27,7 @@ import type { VerificationMode } from '../core/verification.js';
 import { decrypt } from '../security/secrets.js';
 import { getDek, isAvailable as keychainAvailable } from '../security/keychain.js';
 import { loadProjectConfig, projectConfigPath } from './projectConfig.js';
-import { PROVIDER_IDS } from '../providers/registry.js';
+import { PROVIDER_IDS, providerMeta, DEFAULT_LOCAL_TIMEOUT_MS } from '../providers/registry.js';
 
 const VALID_PROVIDERS: ReadonlyArray<ProviderId> = PROVIDER_IDS;
 
@@ -115,6 +120,27 @@ function ensureProviderKeys(s: Settings): Settings {
   return out;
 }
 
+/**
+ * Local model servers (Ollama, LM Studio, LiteLLM) get a generous
+ * per-request timeout automatically — the OpenAI SDK's 10-minute default
+ * can genuinely be too short for a larger local model on modest
+ * hardware. Applies to EVERY local provider entry that doesn't already
+ * have one set (from `.codexrev/config.json`'s registry, a settings.json
+ * override, or env), so this self-heals configs written before this
+ * default existed — no manual settings.json editing required.
+ */
+function applyLocalTimeoutDefaults(s: Settings): Settings {
+  const out: Settings = { ...s, providers: { ...s.providers } };
+  for (const id of VALID_PROVIDERS) {
+    if (providerMeta(id).requiresApiKey) continue; // cloud provider — SDK default is fine
+    const entry = out.providers[id];
+    if (entry && entry.timeoutMs === undefined) {
+      out.providers[id] = { ...entry, timeoutMs: DEFAULT_LOCAL_TIMEOUT_MS };
+    }
+  }
+  return out;
+}
+
 function validateMcpServers(servers: Record<string, McpServerEntry>): void {
   for (const [name, entry] of Object.entries(servers)) {
     if (!entry.transport) {
@@ -154,6 +180,7 @@ export async function loadSettings(cwd: string = process.cwd()): Promise<Setting
   // 3) env overrides
   merged = applyEnvOverrides(merged);
   merged = ensureProviderKeys(merged);
+  merged = applyLocalTimeoutDefaults(merged);
 
   // 4) sanity-check
   if (!VALID_PROVIDERS.includes(merged.provider)) {
@@ -162,6 +189,7 @@ export async function loadSettings(cwd: string = process.cwd()): Promise<Setting
     );
   }
   validateMcpServers(merged.mcpServers);
+  validateReviewPipelineSettings(merged.reviewPipeline);
 
   return merged;
 }
@@ -189,14 +217,18 @@ async function mergeProjectConfig(merged: Settings, cwd: string): Promise<Settin
     );
   }
 
-  let apiKey: string;
-  try {
-    apiKey = decrypt(projectCfg.apiKey, dek);
-  } catch (err) {
-    throw new ConfigError(
-      `failed to decrypt API key in ${projectConfigPath(cwd)}: ${(err as Error).message}. ` +
-        `Run \`codexrev init --reset\` to re-seal.`,
-    );
+  // Legacy top-level key (optional — omitted once the providers[] registry
+  // owns per-provider keys).
+  let apiKey: string | undefined;
+  if (projectCfg.apiKey) {
+    try {
+      apiKey = decrypt(projectCfg.apiKey, dek);
+    } catch (err) {
+      throw new ConfigError(
+        `failed to decrypt API key in ${projectConfigPath(cwd)}: ${(err as Error).message}. ` +
+          `Run \`codexrev init --reset\` to re-seal.`,
+      );
+    }
   }
 
   // New: providers array with per-provider API keys and model configs
@@ -205,7 +237,11 @@ async function mergeProjectConfig(merged: Settings, cwd: string): Promise<Settin
     const active = getActiveModel(projectCfg.providers);
     if (active) {
       const { provider, model } = active;
-      let providerApiKey: string | undefined;
+      // The provider entry owns its key. Only fall back to the legacy
+      // top-level key when this IS the provider that top-level names —
+      // never leak one provider's key to a different endpoint.
+      let providerApiKey: string | undefined =
+        provider.name === projectCfg.provider ? apiKey : undefined;
       if (provider.apiKey) {
         try { providerApiKey = decrypt(provider.apiKey, dek); }
         catch (err) {
@@ -224,12 +260,19 @@ async function mergeProjectConfig(merged: Settings, cwd: string): Promise<Settin
         ...(providerApiKey !== undefined ? { apiKey: providerApiKey } : {}),
         ...(provider.baseUrl ?? model.url ? { baseUrl: model.url ?? provider.baseUrl } : {}),
         ...(model.maxOutputTokens !== undefined ? { maxOutputTokens: model.maxOutputTokens } : {}),
+        ...(model.timeoutMs !== undefined ? { timeoutMs: model.timeoutMs } : {}),
       };
       return { ...merged, provider: providerId, model: model.id, providers };
     }
   }
 
   // Legacy: single API key path
+  if (apiKey === undefined) {
+    throw new ConfigError(
+      `project config at ${projectConfigPath(cwd)} has no usable API key. ` +
+        `Run \`codexrev init --reset\`.`,
+    );
+  }
   const providers = { ...merged.providers };
   providers[projectCfg.provider] = {
     ...(providers[projectCfg.provider] ?? { provider: projectCfg.provider, model: projectCfg.model }),
@@ -249,6 +292,7 @@ function vendorToProviderId(vendor: string): ProviderId {
   const map: Record<string, ProviderId> = {
     openai: 'openai', anthropic: 'anthropic', google: 'google',
     ollama: 'ollama', lmstudio: 'lmstudio', litellm: 'litellm',
+    deepseek: 'deepseek',
     customendpoint: 'openai',
   };
   return map[vendor] ?? 'openai';
