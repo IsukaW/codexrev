@@ -1,11 +1,6 @@
-/**
- * Codexrev — LiteLLM provider adapter.
- *
- * LiteLLM exposes an OpenAI-compatible HTTP API, so this is a thin
- * subclass over the shared OpenAI-compatible base. Migrating to the
- * shared helper also fixes a pre-existing bug where the LiteLLM
- * adapter silently dropped `tool` messages from the conversation.
- */
+// LiteLLM's API is OpenAI-compatible, so this is a thin subclass over the shared base.
+// Moving to the shared helper also fixed a bug where this adapter used to silently
+// drop tool messages.
 
 import type { ContentGeneratorConfig } from '../core/types.js';
 import { OpenAICompatGenerator } from './_openaiCompat.js';

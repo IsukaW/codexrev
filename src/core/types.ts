@@ -1,11 +1,5 @@
-/**
- * Codexrev — core domain types.
- *
- * These types are the lingua franca of the agent loop. The four LLM
- * provider adapters all normalize their native request/response shapes
- * into the types defined here, so the rest of the system can stay
- * provider-agnostic.
- */
+// Core domain types shared by the agent loop — every provider adapter normalizes
+// into these so the rest of the system doesn't care which LLM it's talking to.
 
 /** Roles in a conversation. */
 export type Role = 'system' | 'user' | 'assistant' | 'tool';
@@ -171,16 +165,9 @@ export interface ContentGeneratorConfig {
   readonly maxOutputTokens?: number;
   readonly temperature?: number;
   readonly topP?: number;
-  /**
-   * Per-request client timeout (ms), overriding the OpenAI-compat SDK's
-   * fixed 10-minute default. Local models (Ollama/LM Studio — an
-   * explicit "local/offline" requirement) can genuinely take longer
-   * than that on modest hardware, especially a large model under load
-   * or thermal throttling; without this, a slow-but-working request is
-   * indistinguishable from a hung one and gets killed either way.
-   * Undefined leaves the SDK's own default untouched.
-   */
+  // per-request timeout override (ms) — the OpenAI-compat SDK defaults to 10min fixed,
+  // which isn't enough for local models (Ollama/LM Studio) on slow hardware or under
+  // thermal throttling. leave undefined to keep the SDK default.
   readonly timeoutMs?: number;
-  /** Provider-specific extras (kept open for forward-compat). */
   readonly extras?: Readonly<Record<string, unknown>>;
 }

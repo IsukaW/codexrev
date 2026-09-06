@@ -1,10 +1,5 @@
-/**
- * Codexrev — built-in tool specifications.
- *
- * Each spec defines the tool's name, description, and JSON-Schema-like
- * parameter shape. The actual implementation lives in the same file
- * (or a sibling) and is wired up in `builtin.ts`.
- */
+// Tool specs: name, description, JSON-Schema-ish params. Implementations live in
+// builtin.ts.
 
 import type { ToolParameters } from '../core/types.js';
 

@@ -1,13 +1,7 @@
-/**
- * Codexrev — main TUI component (React + Ink).
- *
- * Top-level layout: header, scrollable conversation area, prompt
- * input, and status bar. Slash commands are handled here.
- *
- * Supports three interaction modes (Ask / Plan / Agent) with live
- * Tab cycling, a multi-agent pipeline in Agent mode, and a
- * clarification Q&A sub-flow via the InteractionChannel.
- */
+// Main TUI screen — header, conversation log, prompt input, status bar.
+// Handles slash commands, mode switching (Ask/Plan/Agent via Tab), the
+// Agent-mode pipeline, and the clarification/approval pop-ups that pause
+// it via InteractionChannel.
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
@@ -47,9 +41,9 @@ interface AppProps {
   provider: ContentGenerator;
   tools: Map<string, Tool>;
   mcp: McpRegistry;
-  /** Shared sandbox manager — Control Panel edits take effect live. */
+  // shared so a mode change in the Control Panel takes effect immediately
   sandbox: SandboxManager;
-  /** Called whenever settings change in-session (so the driver can keep its copy current). */
+  // driver keeps its own settings ref current for the next runAgent() call
   onSettingsChange?: (settings: Settings) => void;
 }
 
@@ -69,8 +63,7 @@ interface Message {
   toolName?: string;
   phaseName?: string;
   toolCallId?: string;
-  /** Present for shell tool calls — drives the live sandbox exec card. */
-  exec?: ExecState;
+  exec?: ExecState; // set for shell calls, drives the live exec card below
 }
 
 let nextId = 1;
@@ -87,7 +80,6 @@ export const App: React.FC<AppProps> = ({
 }) => {
   const { exit } = useApp();
 
-  // ── State ────────────────────────────────────────────────────
   const [settings, setSettingsState] = useState<Settings>(initialSettings);
   const [messages, setMessages] = useState<Message[]>([
     { id: nextId++, role: 'system', text: `Codexrev ready — ${initialSettings.provider} / ${initialSettings.model}` },
@@ -99,7 +91,6 @@ export const App: React.FC<AppProps> = ({
   const modeFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  // ── Control Panel + sandbox status ──────────────────────────
   const [panelOpen, setPanelOpen] = useState(false);
   const [sandboxLabel, setSandboxLabel] = useState<string>(initialSettings.sandbox);
   useEffect(() => {
@@ -124,10 +115,7 @@ export const App: React.FC<AppProps> = ({
     [sandbox, onSettingsChange],
   );
 
-  // ── Approval prompt state ───────────────────────────────────
   const [approvalRequest, setApprovalRequest] = useState<ApprovalRequest | null>(null);
-
-  // ── Clarification / fix-confirm state ────────────────────────
   const [clarificationRequest, setClarificationRequest] = useState<
     import('../core/interaction.js').ClarificationRequest | null
   >(null);
@@ -135,7 +123,6 @@ export const App: React.FC<AppProps> = ({
     import('../core/interaction.js').FixConfirmRequest | null
   >(null);
 
-  // Subscribe to InteractionChannel events
   useEffect(() => {
     const unsub = interactionChannel.onInteraction((event: InteractionEvent) => {
       if (event.type === 'clarification_request') {
@@ -160,10 +147,8 @@ export const App: React.FC<AppProps> = ({
     };
   }, [interactionChannel]);
 
-  // ── Build context from conversation history ──────────────────
-  // When switching modes (e.g. Plan → Agent), the agent needs to
-  // see what was discussed in the previous mode so it can act on it.
-
+  // needed when switching modes (e.g. Plan → Agent) so the agent can see
+  // what was discussed before it
   const buildContextMessages = useCallback(
     (currentMessages: Message[]): import('../core/types.js').Message[] => {
       const context: import('../core/types.js').Message[] = [];
@@ -174,7 +159,7 @@ export const App: React.FC<AppProps> = ({
         } else if (m.role === 'assistant' && m.text) {
           context.push({ role: 'assistant', parts: [{ kind: 'text', text: m.text }] });
         }
-        // Skip system, tool, pipeline messages — they're noise for context
+        // everything else (system/tool/pipeline) is just noise for context
       }
 
       return context;
@@ -182,15 +167,12 @@ export const App: React.FC<AppProps> = ({
     [],
   );
 
-  // ── Mode-aware agent execution ───────────────────────────────
-
   const runAgentForMode = useCallback(
     async (prompt: string, currentMode: InteractionMode) => {
       const modeConfig = MODE_CONFIG[currentMode];
 
       if (currentMode === 'agent') {
-        // Agent mode: full pipeline with fix loop
-        // Pass conversation history as context so the agent can see plans from Plan mode
+        // full pipeline + fix loop, with history so it can see any plan made earlier
         const contextMessages = buildContextMessages(messages);
         for await (const ev of runFixLoop({
           prompt,
@@ -207,9 +189,7 @@ export const App: React.FC<AppProps> = ({
           yieldEvent(ev);
         }
       } else {
-        // Ask / Plan mode: single runAgent call with mode-specific system prompt.
-        // Pass the conversation history so the assistant has session memory
-        // across prompts (follow-ups, corrections, references to earlier turns).
+        // Ask/Plan: one runAgent call, still passing history so it remembers earlier turns
         const modeTools = modeConfig.readOnly ? filterReadOnlyTools(tools) : undefined;
         const contextMessages = buildContextMessages(messages);
         for await (const ev of runAgent(prompt, modeConfig.systemPromptSuffix, modeTools, contextMessages)) {
@@ -220,8 +200,7 @@ export const App: React.FC<AppProps> = ({
     [provider, tools, mcp, settings, interactionChannel, runAgent, messages, buildContextMessages],
   );
 
-  // Track the current assistant text for message accumulation
-  const assistantTextRef = useRef('');
+  const assistantTextRef = useRef(''); // accumulates the streaming reply
 
   function yieldEvent(ev: AgentEvent) {
     if (abortRef.current?.signal.aborted) return;
@@ -295,8 +274,6 @@ export const App: React.FC<AppProps> = ({
     }
   }
 
-  // ── Submit handler ───────────────────────────────────────────
-
   async function handleSubmit(value: string) {
     const prompt = value.trim();
     if (!prompt || busy) return;
@@ -330,8 +307,6 @@ export const App: React.FC<AppProps> = ({
       setFixConfirmRequest(null);
     }
   }
-
-  // ── Clarification answer handler ─────────────────────────────
 
   const handleClarificationAnswer = useCallback(
     (answer: string) => {
@@ -381,8 +356,6 @@ export const App: React.FC<AppProps> = ({
     },
     [fixConfirmRequest, interactionChannel],
   );
-
-  // ── Slash commands ───────────────────────────────────────────
 
   function handleSlash(cmd: string) {
     const [name, ...rest] = cmd.slice(1).split(/\s+/);
@@ -475,8 +448,6 @@ export const App: React.FC<AppProps> = ({
     }
   }
 
-  // ── Key bindings ─────────────────────────────────────────────
-
   useInput((inputChar, key) => {
     if (key.ctrl && inputChar === 'c') {
       if (busy && abortRef.current) {
@@ -487,19 +458,15 @@ export const App: React.FC<AppProps> = ({
       }
       return;
     }
-    // Control Panel owns the keyboard while open.
-    if (panelOpen) return;
-    // Ctrl+S opens the Control Panel (settings dashboard).
+    if (panelOpen) return; // panel has its own useInput while it's open
     if (key.ctrl && inputChar === 's' && !clarificationRequest && !fixConfirmRequest && !approvalRequest) {
       setPanelOpen(true);
       return;
     }
-    // Tab cycles mode — only when not busy and no prompt pending
     if (key.tab && !busy && !clarificationRequest && !fixConfirmRequest && !approvalRequest) {
       setMode((prev) => {
         const idx = MODE_ORDER.indexOf(prev);
         const next = MODE_ORDER[(idx + 1) % MODE_ORDER.length];
-        // Show flash notification near input
         const cfg = MODE_CONFIG[next];
         setModeFlash(`⊞ Switched to ${cfg.label} mode`);
         if (modeFlashTimer.current) clearTimeout(modeFlashTimer.current);
@@ -508,8 +475,6 @@ export const App: React.FC<AppProps> = ({
       });
     }
   });
-
-  // ── Render ───────────────────────────────────────────────────
 
   const isPaused =
     clarificationRequest !== null || fixConfirmRequest !== null || approvalRequest !== null;
@@ -665,15 +630,13 @@ const MessageLine: React.FC<{ msg: Message }> = ({ msg }) => {
   }
 };
 
-// ── Sandbox exec UI ───────────────────────────────────────────
-
 function truncate(s: string | undefined, n: number): string {
   if (!s) return '';
   const flat = s.replace(/\s+/g, ' ').trim();
   return flat.length > n ? flat.slice(0, n - 1) + '…' : flat;
 }
 
-/** Live elapsed-seconds counter, ticks 10×/s while a command runs. */
+// ticks 10x/sec while a command is running
 const ElapsedTimer: React.FC<{ startedAt: number }> = ({ startedAt }) => {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -683,7 +646,7 @@ const ElapsedTimer: React.FC<{ startedAt: number }> = ({ startedAt }) => {
   return <Text dimColor>{((now - startedAt) / 1000).toFixed(1)}s</Text>;
 };
 
-/** One shell command's sandbox execution — live while running, then collapsed. */
+// shell command card — live while running, collapses to one line once it's done
 const ExecCard: React.FC<{ exec: ExecState }> = ({ exec }) => {
   if (exec.status === 'running') {
     return (

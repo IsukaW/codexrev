@@ -1,19 +1,9 @@
 /**
- * Codexrev — Feature 2 (review-pipeline) report renderer.
- *
- * Takes the final aggregated context (all six roles' outputs + the
- * Resolver's decision, Phases 5/6) and renders JSON, Markdown, and HTML
- * versions, saved to `.codexrev/review-pipeline/reports/scan-<timestamp>.*`
- * per Section 4's folder convention. The HTML report is the "first
- * command" deliverable: a decision banner up top, per-role sections
- * with their findings, and a git change-coverage map — each changed
- * line linked to whichever role's finding(s) cover it (FR14).
- *
- * The HTML is a single self-contained file (inline CSS, no external
- * assets, no JS framework) so it opens directly via `file://` in any
- * browser — no local server needed. All LLM-produced text (summaries,
- * finding descriptions) is HTML-escaped before embedding; it's
- * untrusted content as far as this renderer is concerned.
+ * Renders the aggregated role outputs + resolver decision as JSON, Markdown
+ * and HTML reports under .codexrev/review-pipeline/reports/scan-<timestamp>.*.
+ * HTML report is a single self-contained file (inline CSS, no JS framework)
+ * so it opens straight from file:// — no server needed. LLM-produced text
+ * gets HTML-escaped before embedding since we treat it as untrusted.
  */
 
 import { promises as fs } from 'node:fs';
@@ -23,8 +13,6 @@ import { RESOLVER_DECISION_LABELS, type ResolvedFinding, type ResolverResult } f
 import { fixAttemptRoleLabel, type BreakerBuilderOutcome, type FixAttemptRecord } from '../pipeline/breakerBuilderLoop.js';
 import type { ParsedDiff } from '../pipeline/diffReader.js';
 import type { PipelineOutcome } from '../pipeline/orchestrator.js';
-
-// ── Report data model ───────────────────────────────────────────────
 
 export interface ReportData {
   readonly runId: string;
@@ -37,8 +25,6 @@ export interface ReportData {
   readonly skippedRoles: readonly RoleId[];
 }
 
-// ── Change coverage map (FR14) ──────────────────────────────────────
-
 /** One added line in the diff, and whatever findings (from any role) cover it. */
 export interface CoverageLine {
   readonly file: string;
@@ -47,12 +33,7 @@ export interface CoverageLine {
   readonly findings: readonly ResolvedFinding[];
 }
 
-/**
- * Maps every added line in the diff to the findings that cover it —
- * "coverage" in the same spirit as test coverage: most lines will have
- * none (reviewed, nothing found), which is exactly the point of
- * showing them too, not just the flagged ones.
- */
+// "coverage" like test coverage — most lines have none, and showing those too is the point
 export function buildChangeCoverageMap(diff: ParsedDiff, resolvedFindings: readonly ResolvedFinding[]): CoverageLine[] {
   const lines: CoverageLine[] = [];
   for (const file of diff.files) {
@@ -70,8 +51,6 @@ export function buildChangeCoverageMap(diff: ParsedDiff, resolvedFindings: reado
   return lines;
 }
 
-// ── File paths ───────────────────────────────────────────────────────
-
 export function defaultReportsDir(projectRoot: string): string {
   return path.join(projectRoot, '.codexrev', 'review-pipeline', 'reports');
 }
@@ -83,7 +62,7 @@ export interface ReportPaths {
   readonly html: string;
 }
 
-/** Filesystem-safe timestamp (UTC, colon-free — safe on Windows too) for the report filename. */
+/** Filesystem-safe timestamp for the filename — UTC, no colons so it works on Windows too. */
 export function formatTimestampForFilename(date: Date = new Date()): string {
   const p = (n: number): string => String(n).padStart(2, '0');
   return `${date.getUTCFullYear()}${p(date.getUTCMonth() + 1)}${p(date.getUTCDate())}-${p(date.getUTCHours())}${p(date.getUTCMinutes())}${p(date.getUTCSeconds())}`;
@@ -103,8 +82,6 @@ export async function saveReport(data: ReportData, dir: string): Promise<ReportP
   await fs.writeFile(paths.html, renderReportHtml(data), 'utf-8');
   return paths;
 }
-
-// ── JSON ─────────────────────────────────────────────────────────────
 
 export function renderReportJson(data: ReportData): string {
   const coverage = buildChangeCoverageMap(data.diff, data.resolver.resolvedFindings);
@@ -144,8 +121,6 @@ export function renderReportJson(data: ReportData): string {
   };
   return JSON.stringify(payload, null, 2);
 }
-
-// ── Markdown ─────────────────────────────────────────────────────────
 
 export function renderReportMarkdown(data: ReportData): string {
   const lines: string[] = [];
@@ -207,8 +182,6 @@ function mdEscape(s: string): string {
   return s.replace(/\|/g, '\\|').replace(/\n/g, ' ');
 }
 
-// ── HTML ─────────────────────────────────────────────────────────────
-
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
@@ -238,7 +211,7 @@ const SEVERITY_COLOR: Record<string, string> = {
   critical: '#82071e',
 };
 
-/** Exported so the Phase 9 fix report can reuse it verbatim for its "still unresolved" findings list. */
+/** Exported so the fix report can reuse it for its "still unresolved" findings list. */
 export function renderFindingsTable(findings: readonly ResolvedFinding[] | readonly RoleOutput['findings'][number][]): string {
   if (findings.length === 0) {
     return `<p class="muted">No findings from this role.</p>`;
@@ -292,7 +265,7 @@ function renderCoverageMap(diff: ParsedDiff, resolvedFindings: readonly Resolved
       const rows: string[] = [];
       for (const hunk of file.hunks) {
         for (const dLine of hunk.lines) {
-          if (dLine.type === 'del') continue; // coverage map shows the resulting (new) code
+          if (dLine.type === 'del') continue; // only showing the resulting code
           const lineNo = dLine.newLineNumber;
           const findings =
             dLine.type === 'add' && lineNo !== undefined
@@ -328,17 +301,9 @@ function renderCoverageMap(diff: ParsedDiff, resolvedFindings: readonly Resolved
   return fileBlocks;
 }
 
-/**
- * Shared CSS for both the scan report (this file's original job) and
- * the Phase 9 fix-summary report — one stylesheet, embedded once per
- * document (each report is still a single self-contained file; there's
- * just one shared string this module builds it from), so the two
- * reports read as one consistent visual system instead of drifting
- * independently. Deliberately has no per-report-instance color baked
- * in (e.g. `.banner`'s background) — those vary per document and are
- * set inline via `style="background:..."` on the element instead, same
- * technique the severity/verdict badges already used.
- */
+// shared between the scan report and the fix-summary report so they look
+// like one system instead of drifting apart; per-instance colors (banner bg
+// etc) are set inline via style="" rather than baked in here
 const REPORT_STYLE = `
   :root { color-scheme: light; }
   * { box-sizing: border-box; }
@@ -406,7 +371,7 @@ const REPORT_STYLE = `
   footer { margin-top: 40px; color: #8c959f; font-size: 12px; text-align: center; }
 `;
 
-/** Wraps `bodyHtml` in the shared self-contained document shell (single `<style>`, no external assets). */
+/** Wraps bodyHtml in the shared document shell — single <style>, no external assets. */
 function htmlDocument(title: string, bodyHtml: string): string {
   return `<!doctype html>
 <html lang="en">
@@ -453,15 +418,9 @@ export function renderReportHtml(data: ReportData): string {
   return htmlDocument(`Codexrev Review — ${RESOLVER_DECISION_LABELS[d.decision]}`, body);
 }
 
-// ── Phase 9: post-fix HTML report ───────────────────────────────────
-//
-// Renders what the Breaker-Builder loop actually did, once `--fix` has
-// run: which findings got fixed (before/after code, which fixer stage
-// resolved them), and which ones remain after hitting the iteration/
-// retry limits — Phase 9's "New" bullet 2. Deliberately HTML-only, not
-// JSON+MD like the scan report — that's the literal deliverable this
-// phase asks for ("a second HTML report"), so no JSON/MD variant is
-// added here without a corresponding request.
+// post-fix report: what the Breaker-Builder loop did once --fix ran —
+// which findings got fixed and how, which ones are still open. HTML only,
+// no JSON/MD variant, unlike the scan report.
 
 export interface FixReportData {
   readonly runId: string;
@@ -570,7 +529,7 @@ export function renderFixReportHtml(data: FixReportData): string {
   return htmlDocument(`Codexrev Fix Summary — ${OUTCOME_LABEL[data.outcome]}`, body);
 }
 
-/** `.codexrev/review-pipeline/reports/fix-<timestamp>.html` — Phase 9's exact naming. */
+/** .codexrev/review-pipeline/reports/fix-<timestamp>.html */
 export function fixReportPath(dir: string, timestamp: string): string {
   return path.join(dir, `fix-${timestamp}.html`);
 }

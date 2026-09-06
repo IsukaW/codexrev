@@ -1,30 +1,13 @@
 /**
- * Codexrev — Feature 2 (review-pipeline) audit trail.
+ * Audit trail for the review pipeline: appends a run_start marker, one line
+ * per role verdict, one per Breaker-Builder fix attempt, and a final
+ * resolver-decision line to .codexrev/audit.jsonl. Append-only, never
+ * cleared or rotated. Callers write each entry as soon as that step
+ * finishes (not batched) so a crash mid-run still leaves a partial trail.
+ * Entries share a runId per invocation so readers can group by run.
  *
- * Appends one `run_start` marker, one JSON line per role verdict, one
- * line per Breaker-Builder fix attempt (Phase 9, when `--fix` runs),
- * and one final line for the Resolver's decision, to
- * `.codexrev/audit.jsonl` (exact path per Section 1/2 of the dev guide)
- * — structured, chronologically-ordered, append-only. Every pipeline
- * run must produce an audit entry, even one that stops early via
- * Skip/Abort (Golden Rule) — callers append each entry the moment that
- * step finishes, not batched at the end, so a hard crash mid-run (or
- * mid-fix-loop) still leaves a partial, honest trail.
- *
- * The log accumulates across every run ever made in a project — it is
- * never cleared or rotated (that's the point of an audit trail). Every
- * entry carries a shared `runId` (one random id per `codexrev review
- * scan` invocation) so a reader — human or `readAuditLog()` — can tell
- * where one run ends and the next begins, and filter/group by run,
- * without depending on blank lines or timestamp gaps.
- *
- * There's no separately exported generic atomic-write helper in
- * `src/config/` to reuse directly — `saveProjectConfig()`'s tmp+rename
- * logic is inlined for the single `.codexrev/config.json` file. This
- * reuses that *pattern* (tmp file + `fs.rename`) rather than duplicating
- * unrelated code, and reuses `ensureProjectConfigDir`/`projectConfigDir`
- * as-is for path handling since `audit.jsonl` lives in the same
- * `.codexrev/` directory.
+ * No generic atomic-write helper exists elsewhere to reuse, so the
+ * tmp-file + rename pattern from saveProjectConfig is duplicated here.
  */
 
 import { randomBytes } from 'node:crypto';
@@ -51,7 +34,7 @@ export interface RunStartAuditEntry {
   readonly type: 'run_start';
   readonly timestamp: string;
   readonly runId: string;
-  /** 'staged', or the git ref this run was scanned against (`--diff <ref>`). */
+  /** 'staged', or the git ref this run was scanned against (--diff <ref>) */
   readonly diffRef: string;
 }
 
@@ -79,14 +62,8 @@ export interface ResolverDecisionAuditEntry {
   readonly pipelineOutcome: PipelineOutcome;
 }
 
-/**
- * One Breaker-Builder fix attempt (Phase 9's "New" bullet 1: which
- * fixer stage, which file, before/after code state, iteration number).
- * Written the moment `breakerBuilderLoop.ts` applies the edit — same
- * "append as it happens, not batched at the end" discipline as
- * `roleVerdictAuditEntry`, so a hard crash mid-fix-loop still leaves an
- * honest partial trail of what was actually changed.
- */
+// one Breaker-Builder fix attempt — fixer stage, file, before/after, iteration.
+// written the moment the loop applies the edit, same as roleVerdictAuditEntry
 export interface FixAttemptAuditEntry {
   readonly type: 'fix_attempt';
   readonly timestamp: string;
@@ -107,12 +84,11 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-/** Builds the entry that marks the start of one run — call once, before the first role starts. */
+// call once, before the first role starts
 export function runStartAuditEntry(runId: string, diffRef: string): RunStartAuditEntry {
   return { type: 'run_start', timestamp: nowIso(), runId, diffRef };
 }
 
-/** Builds the audit entry for one completed role — call right after that role finishes. */
 export function roleVerdictAuditEntry(runId: string, output: RoleOutput): RoleVerdictAuditEntry {
   return {
     type: 'role_verdict',
@@ -126,7 +102,7 @@ export function roleVerdictAuditEntry(runId: string, output: RoleOutput): RoleVe
   };
 }
 
-/** Builds the final audit entry for the Resolver's decision — call once, after the pipeline stops. */
+// final entry for the resolver's decision, call once after the pipeline stops
 export function resolverDecisionAuditEntry(
   runId: string,
   params: {
@@ -142,7 +118,6 @@ export function resolverDecisionAuditEntry(
   return { type: 'resolver_decision', timestamp: nowIso(), runId, ...params };
 }
 
-/** Builds the audit entry for one Breaker-Builder fix attempt — call right after that fix is applied. */
 export function fixAttemptAuditEntry(runId: string, record: FixAttemptRecord): FixAttemptAuditEntry {
   return {
     type: 'fix_attempt',
@@ -159,16 +134,9 @@ export function fixAttemptAuditEntry(runId: string, record: FixAttemptRecord): F
   };
 }
 
-/**
- * Appends one entry to `.codexrev/audit.jsonl`, atomically (read the
- * current content, append the new line, write to a tmp file, rename
- * over the original — same tmp+rename pattern as `saveProjectConfig`).
- * Never truncates or reorders existing lines — the log accumulates
- * across every run; see this file's docstring for how `runId` keeps
- * runs distinguishable as it grows. Not safe against two concurrent
- * `codexrev review` processes racing on the same repo (same caveat
- * `saveProjectConfig` already has) — out of scope here.
- */
+// atomic append: read current content, add the line, write to tmp, rename over
+// original. not safe against two concurrent `codexrev review` processes on
+// the same repo, same caveat saveProjectConfig already has
 export async function appendAuditEntry(projectRoot: string, entry: AuditEntry): Promise<void> {
   const dir = await ensureProjectConfigDir(projectRoot);
   const file = auditLogPath(projectRoot);

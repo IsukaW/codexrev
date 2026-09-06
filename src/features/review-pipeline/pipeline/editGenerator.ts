@@ -1,18 +1,9 @@
-/**
- * Codexrev — Feature 2 (review-pipeline) LLM-based edit generator.
- *
- * The Breaker-Builder loop's fallback (Phase 8) for findings
- * `deterministicFixer.ts` can't handle — which in practice is most
- * findings, since the deterministic path only covers three narrow TS
- * codes from the Build role. Calls the model with a ±30-line context
- * window around the finding (Section 2's exact framing) and asks for a
- * minimal string-replacement edit, reusing `llmRoleRunner.ts`'s
- * `extractJson()` for the same robust-parsing reasons as the six roles.
- *
- * Returns an `{oldString, newString}` pair, never touches the
- * filesystem itself — the caller applies it via the shared `edit` tool,
- * same as `deterministicFixer.ts`.
- */
+// LLM fallback for findings deterministicFixer.ts can't handle (which is most
+// of them — the deterministic path only covers three narrow TS codes). Gives
+// the model a +/-30 line window around the finding and asks for a minimal
+// string-replacement edit. Reuses llmRoleRunner's extractJson for parsing.
+// Never touches disk itself, just returns {oldString, newString} for the caller
+// to apply via the edit tool.
 
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -63,13 +54,9 @@ If you cannot confidently produce a safe, minimal fix from the context shown, re
 Do not include line-number prefixes in "oldString" or "newString" — those are only shown to you for orientation, they are not part of the actual file content.
 `.trim();
 
-/**
- * Asks the model for a minimal fix for `finding`. Returns `null` when
- * the model declines (its own `oldString: null` response), when its
- * JSON can't be parsed, or when the returned `oldString` doesn't
- * actually appear (exactly once) in the real file — a safety check
- * before the caller ever attempts to apply it via the `edit` tool.
- */
+// Returns null if the model declines, its JSON doesn't parse, or oldString
+// doesn't actually appear exactly once in the real file (sanity check before
+// the edit tool ever sees it).
 export async function generateEdit(finding: Finding, ctx: EditGeneratorContext): Promise<EditGeneratorResult | null> {
   const full = path.isAbsolute(finding.file) ? finding.file : path.join(ctx.cwd, finding.file);
   let content: string;

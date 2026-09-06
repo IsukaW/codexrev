@@ -1,37 +1,25 @@
 /**
- * Codexrev — Build Analyst (Build) role.
+ * Build Analyst role. The only role that isn't an LLM call — it detects
+ * the project's toolchain from marker files and shells out to the
+ * matching checker (reuses the `shell` tool from builtin.ts), then
+ * normalizes the output into `Finding[]` so the rest of the pipeline
+ * doesn't need to know this role is different.
  *
- * Third role in the pipeline, and the only one that isn't an LLM call
- * (Section 2). Detects the project's toolchain from marker files and
- * shells out to the matching type/lint checker, reusing the existing
- * `shell` tool from `src/tools/builtin.ts` — no new process-execution
- * code. Compiler/vet/check output is normalized into `Finding[]` so the
- * rest of the pipeline (Resolver, report renderer) never has to
- * special-case this role's LLM-less nature.
- *
- * Dispatch table (Section 2, exact):
+ * Dispatch:
  *   tsconfig.json  → tsc
  *   go.mod         → go vet
  *   Cargo.toml     → cargo check
  *   pyproject.toml → mypy
  *
- * A repo can trip more than one marker (a polyglot monorepo) — every
- * detected toolchain runs, and findings from all of them are pooled.
- * The Resolver (Phase 6) applies its own dedicated weight to Build
- * failures (0.4, per Section 2), separate from the BA/Dev/Sec/QA/PM
- * split.
+ * Polyglot repos can trip more than one marker — we run all of them and
+ * pool the findings. Resolver gives Build failures their own weight
+ * (0.4), separate from BA/Dev/Sec/QA/PM.
  *
- * Buildless-project fallback: a plain JS codebase with none of the four
- * markers used to get a free, unchecked "pass" — real feedback that
- * Build was doing nothing useful there. When no marker is found, this
- * now runs `node --check` (Node's own zero-config syntax validator, no
- * project setup required) against every `.js`/`.mjs`/`.cjs` file that
- * changed in the diff being reviewed — not the whole repo, since Build's
- * job is to check what's being reviewed, not to audit the codebase.
- * This only catches syntax errors, not type errors (there's no
- * TypeScript-without-a-tsconfig fallback — that needs a real TS parser,
- * out of scope here); Dev/QA's LLM judgment still carries the rest of
- * quality analysis for buildless projects, as before.
+ * Fallback for buildless JS projects: without any of the four markers
+ * this used to just pass with no real check. Now it runs `node --check`
+ * against the changed .js/.mjs/.cjs files (only what's in the diff, not
+ * the whole repo). Syntax errors only, no type checking — a real TS
+ * parser is out of scope here.
  */
 
 import { promises as fs } from 'node:fs';
@@ -113,13 +101,9 @@ export function parseMypy(output: string): CompilerDiagnostic[] {
 
 const JS_FALLBACK_EXTENSIONS: readonly string[] = ['.js', '.mjs', '.cjs'];
 
-/**
- * Parses `node --check <file>` output. On a syntax error, Node prints
- * the offending file:line as its own line, a caret pointer, then a
- * "SyntaxError: ..." (or similar) line — there's no single-line
- * "file:line: message" format like the other tools here, so this is
- * its own small parser rather than reusing the tsc/cargo shape.
- */
+// node --check doesn't print a single-line "file:line: message" like the
+// other tools — it dumps file:line, a caret pointer, then a SyntaxError
+// line — so this gets its own parser instead of reusing tsc/cargo's shape.
 export function parseNodeCheck(output: string, file: string): CompilerDiagnostic[] {
   if (!output.trim()) return [];
   const errorMatch = output.match(/^(\w*Error): (.*)$/m);
@@ -129,12 +113,7 @@ export function parseNodeCheck(output: string, file: string): CompilerDiagnostic
   return [{ file, line, severity: 'error', message: `${errorMatch[1]}: ${errorMatch[2]}` }];
 }
 
-/**
- * Buildless-project fallback (see this file's top docstring). Returns
- * `null` when there's nothing in the diff worth syntax-checking (no JS
- * files changed) — the caller then falls back to its original
- * "nothing to check" pass.
- */
+// Returns null when there's no JS in the diff — caller falls back to a plain pass.
 async function runNodeSyntaxFallback(
   ctx: RoleRunContext,
   shell: Tool,

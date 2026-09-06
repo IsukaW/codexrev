@@ -1,14 +1,7 @@
-/**
- * Codexrev — local-provider connectivity probe.
- *
- * Hits `GET <baseUrl>/models` with a short timeout so the CLI can fail
- * fast with a friendly `LocalServerError` instead of an opaque SDK
- * stack trace when Ollama / LM Studio / LiteLLM is not running.
- *
- * Cloud providers (OpenAI / Anthropic / Google) are not probed — the
- * OpenAI client already surfaces a clearer error for those cases and
- * adding an extra network round-trip on every launch is wasteful.
- */
+// Hits GET <baseUrl>/models with a short timeout so we fail fast with a friendly
+// LocalServerError instead of an opaque SDK stack trace when Ollama/LM Studio/LiteLLM
+// isn't running. Cloud providers aren't probed here — the OpenAI client already gives
+// a clear enough error and an extra round-trip on every launch isn't worth it.
 
 import type { ProviderId } from '../core/types.js';
 import { LocalServerError } from '../utils/errors.js';
@@ -16,11 +9,8 @@ import { providerMeta } from './registry.js';
 
 const PROBE_TIMEOUT_MS = 5_000;
 
-/**
- * Returns the resolved base URL for a provider — settings-provided baseUrl
- * wins, then env-var, then the registry default. Returns `null` for
- * providers without a base-URL knob (e.g. Google Vertex).
- */
+// settings baseUrl wins, then env var, then registry default. null for providers with
+// no base-URL knob (Google Vertex etc).
 export function resolveBaseUrlForProvider(
   id: ProviderId,
   settingsBaseUrl?: string,
@@ -34,13 +24,9 @@ export function resolveBaseUrlForProvider(
   return meta.defaultBaseUrl;
 }
 
-/**
- * Probe the local server. Resolves silently on a 2xx response and throws
- * `LocalServerError` on connection refused, DNS failure, timeout, or a
- * non-2xx response. Does nothing for cloud providers — callers should
- * gate with `providerMeta(id).requiresApiKey === false` (or
- * `!meta.defaultBaseUrl`) before invoking.
- */
+// resolves quietly on 2xx, throws LocalServerError on refused/DNS-fail/timeout/non-2xx.
+// callers should gate on providerMeta(id).requiresApiKey === false (or
+// !meta.defaultBaseUrl) before calling this for cloud providers.
 export async function probeLocalProvider(
   id: ProviderId,
   baseUrl: string,

@@ -1,17 +1,9 @@
-/**
- * Codexrev — Feature 2 (review-pipeline) six-role sequential orchestrator.
- *
- * Runs the six roles in strict order (BA → Dev → Build → Sec → QA →
- * PM, per Section 2), feeding each one the same `ContextAggregator` +
- * `ILLMProvider` and appending its output before the next role starts —
- * the literal "full context accumulation" from the methodology.
- *
- * Interactive mode (an `InteractionChannel` is passed in) pauses for a
- * Continue/Details/Skip/Abort gate after every role, reusing the
- * `StageGateRequest`/`StageGateDecision` plumbing added to
- * `core/interaction.ts` in this phase. Non-interactive mode (no
- * channel — CI / `--print`) runs straight through with no gates.
- */
+// Runs the six roles in strict order, feeding each the same aggregator +
+// provider and appending its output before the next role starts.
+//
+// Interactive mode (InteractionChannel passed in) pauses for a
+// Continue/Details/Skip/Abort gate after each role. Non-interactive (CI,
+// --print) just runs straight through.
 
 import { ROLE_LABELS, ROLE_ORDER, type RoleId, type RoleOutput } from '../roles/roleContract.js';
 import { runBaRole } from '../roles/ba.js';
@@ -26,7 +18,7 @@ import type { ILLMProvider } from './illmProvider.js';
 import type { RoleRunContext } from './roleRunContext.js';
 import { InteractionChannel } from '../../../core/interaction.js';
 
-/** Exported so Phase 8's `breakerBuilderLoop.ts` can re-run individual roles without duplicating this map. */
+// exported so breakerBuilderLoop.ts can re-run individual roles without its own copy of this map
 export const ROLE_RUNNERS: Readonly<Record<RoleId, (ctx: RoleRunContext) => Promise<RoleOutput>>> = {
   ba: runBaRole,
   dev: runDevRole,
@@ -44,68 +36,31 @@ export interface RunPipelineOptions {
   readonly llm: ILLMProvider;
   readonly model: string;
   readonly cwd: string;
-  /**
-   * When provided, the orchestrator pauses for a Continue/Details/Skip/
-   * Abort gate after every role via `channel.requestStageGate()`. Omit
-   * for non-interactive (CI / `--print`) mode, which runs straight
-   * through.
-   */
-  readonly interaction?: InteractionChannel;
-  /**
-   * Called right before each role starts (i.e. right before its LLM
-   * call, or right before the Build role shells out). This is how the
-   * CLI shows "Business Analyst — running…" with a spinner instead of
-   * going quiet for however long the model call takes.
-   */
-  readonly onRoleStart?: (role: RoleId) => void;
-  /**
-   * Called immediately after each role finishes, before the gate (if
-   * any) — and *awaited* before moving on. This is how the CLI prints
-   * the verdict, captures the full `RoleOutput` for "Details", and (from
-   * Phase 6) appends that role's audit-log entry — awaiting it means the
-   * entry is flushed to `.codexrev/audit.jsonl` before the next role
-   * even starts, so a crash mid-run still leaves an honest, complete
-   * trail up to the last role that actually finished.
-   */
+  readonly interaction?: InteractionChannel; // omit for non-interactive (CI/--print), runs straight through
+  readonly onRoleStart?: (role: RoleId) => void; // fires right before a role's LLM call (or Build's shell-out) so the CLI can show a spinner
+  // fires right after a role finishes, awaited before moving on — CLI uses this to print the
+  // verdict and append the audit-log entry; awaiting it means the entry is flushed before the
+  // next role starts, so a crash mid-run still leaves a complete trail up to the last role that ran
   readonly onRoleComplete?: (output: RoleOutput) => void | Promise<void>;
 }
 
 export interface PipelineRunResult {
   readonly outcome: PipelineOutcome;
-  /** Final accumulated context — pass straight to Phase 6's Resolver / Phase 7's report renderer. */
-  readonly aggregator: ContextAggregator;
+  readonly aggregator: ContextAggregator; // final accumulated context, feed straight to Resolver/report renderer
   readonly ranRoles: readonly RoleId[];
-  /** Roles never run because a Skip/Abort gate decision or a role error stopped the pipeline early. */
-  readonly skippedRoles: readonly RoleId[];
-  /** Set only when `outcome === 'errored'` — the error a role threw (e.g. a `ProviderError`). */
-  readonly error?: unknown;
+  readonly skippedRoles: readonly RoleId[]; // never ran because a skip/abort or a role error stopped things early
+  readonly error?: unknown; // set only when outcome === 'errored'
 }
 
-/**
- * Runs all six roles in `ROLE_ORDER`, in strict sequence, feeding each
- * one the shared `ContextAggregator` + `ILLMProvider`.
- *
- * Gate semantics (interactive mode only):
- *   - 'continue' → proceed to the next role.
- *   - 'details'  → re-prompt the same gate (the CLI has already shown
- *                  the role's full findings via `onRoleComplete`).
- *   - 'skip'     → stop running further roles; the roles already
- *                  completed are kept, so the Resolver/report can still
- *                  work from a partial run.
- *   - 'abort'    → stop immediately; same partial-result shape as
- *                  'skip', distinguished by `outcome: 'aborted'` so a
- *                  caller (e.g. the audit logger in Phase 6) can record
- *                  it distinctly.
- *
- * A role throwing (e.g. a `ProviderError` from a bad API key) does
- * NOT propagate out of this function — it's caught and turned into
- * `outcome: 'errored'` with the underlying error attached, same
- * partial-result shape as skip/abort. This guarantees the caller always
- * gets a normal result to resolve + audit-log (Golden Rule: never skip
- * the audit log, even on failure) — `runReviewSession.ts` re-throws
- * `result.error` itself, after writing the audit trail, so the outward
- * error-surfacing behavior callers already depend on is unchanged.
- */
+// Gate semantics in interactive mode: 'continue' moves to the next role,
+// 'details' re-prompts the same gate (CLI already printed findings via
+// onRoleComplete), 'skip' stops but keeps completed roles so the Resolver
+// can still work off a partial run, 'abort' does the same but tagged
+// outcome: 'aborted' so the audit logger can tell them apart.
+//
+// A role throwing doesn't propagate out of here — it's caught into
+// outcome: 'errored' with the error attached, same partial shape as skip/abort,
+// so runReviewSession can always write the audit trail before re-throwing.
 export async function runPipeline(opts: RunPipelineOptions): Promise<PipelineRunResult> {
   const aggregator = new ContextAggregator(opts.diff, opts.urs);
   const ranRoles: RoleId[] = [];
@@ -148,7 +103,7 @@ export async function runPipeline(opts: RunPipelineOptions): Promise<PipelineRun
   return { outcome: 'completed', aggregator, ranRoles, skippedRoles: [] };
 }
 
-/** Loops the stage gate for one role until a non-'details' decision comes back. */
+// loops the gate for one role until a non-'details' decision comes back
 async function runGateUntilDecided(
   channel: InteractionChannel,
   role: RoleId,
@@ -157,7 +112,6 @@ async function runGateUntilDecided(
   for (;;) {
     const decision = await channel.requestStageGate(role, ROLE_LABELS[role], output.verdict, output.summary);
     if (decision !== 'details') return decision;
-    // 'details' loops back around — the CLI-side subscriber is expected
-    // to have already printed the full findings before responding.
+    // 'details' loops back — CLI already printed the full findings before responding
   }
 }

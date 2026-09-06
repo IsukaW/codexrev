@@ -1,11 +1,6 @@
-/**
- * Codexrev — symmetric encryption primitives for at-rest secrets.
- *
- * AES-256-GCM with a random 96-bit IV per encryption. The 32-byte data
- * encryption key (DEK) is supplied by the caller and is expected to be
- * persisted in the OS keychain — see ./keychain.ts. We never log keys
- * or plaintext and never accept a hard-coded key.
- */
+// AES-256-GCM with a fresh 96-bit IV per encryption. Caller supplies the 32-byte DEK,
+// expected to live in the OS keychain (see ./keychain.ts). Never log keys or
+// plaintext, never accept a hard-coded key.
 
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { CodexrevError } from '../utils/errors.js';
@@ -23,11 +18,10 @@ const IV_BYTES = 12;
 const TAG_BYTES = 16;
 
 export interface EncryptedPayload {
-  /** Base64-encoded random IV (12 bytes). */
+  /** base64, 12 bytes */
   iv: string;
-  /** Base64-encoded GCM auth tag (16 bytes). */
+  /** base64, 16 bytes */
   tag: string;
-  /** Base64-encoded ciphertext (same length as plaintext). */
   ciphertext: string;
 }
 

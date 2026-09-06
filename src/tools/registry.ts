@@ -1,10 +1,5 @@
-/**
- * Codexrev — tool registry.
- *
- * A `Tool` is a self-describing unit the model can invoke. Each tool
- * has a JSON-Schema-ish `declaration` (passed to the model) and an
- * `execute(args, ctx)` function.
- */
+// A Tool is a self-describing unit the model can invoke — a JSON-Schema-ish
+// declaration plus an execute(args, ctx) function.
 
 import type { ToolDeclaration, ToolParameters } from '../core/types.js';
 import type { Settings } from '../config/schema.js';
@@ -15,15 +10,13 @@ import type { InteractionChannel } from '../core/interaction.js';
 export interface ToolContext {
   cwd: string;
   signal?: AbortSignal;
-  /** Optional approval callback. Return `true` to allow, `false` to deny. */
+  /** approval callback — true to allow, false to deny */
   ask?: (toolName: string, args: unknown) => Promise<boolean>;
 }
 
 export interface ToolResult {
-  /** String output for text-only LLMs, or structured JSON for richer models. */
   output: string | unknown;
   isError?: boolean;
-  /** Optional metadata to surface in the UI. */
   metadata?: Record<string, unknown>;
 }
 
@@ -61,7 +54,6 @@ export class ToolRegistry {
   }
 }
 
-/** Build a registry pre-populated with the built-in tools. */
 export async function createToolRegistry(
   settings: Settings,
   interactionChannel?: InteractionChannel,

@@ -1,13 +1,6 @@
-/**
- * Codexrev — clarification prompt component.
- *
- * Renders when the pipeline requests clarification from the user.
- * Always shows a text input for free-form answers. If the LLM
- * provided suggestions, they appear as quick-select buttons above
- * the input (press Enter on a suggestion to use it, or just type).
- *
- * Also handles fix-confirm prompts (continue/stop).
- */
+// Pop-up prompts the pipeline can show mid-run: clarification questions
+// (with optional quick-select suggestions), fix-confirm (continue/stop),
+// and tool-approval gates.
 
 import React, { useState, useCallback } from 'react';
 import { Box, Text, useInput } from 'ink';
@@ -19,8 +12,6 @@ import type {
   ApprovalRequest,
   ApprovalDecision,
 } from '../core/interaction.js';
-
-// ── Clarification Prompt ──────────────────────────────────────────
 
 interface ClarificationPromptProps {
   request: ClarificationRequest;
@@ -49,8 +40,8 @@ export const ClarificationPrompt: React.FC<ClarificationPromptProps> = ({
     [onAnswer],
   );
 
-  // Tab toggles between suggestions list and free-form input
   useInput((_, key) => {
+    // Tab flips between the suggestion list and typing a custom answer
     if (key.tab && request.suggestions.length > 0) {
       setUseSuggestions((prev) => !prev);
     }
@@ -70,7 +61,6 @@ export const ClarificationPrompt: React.FC<ClarificationPromptProps> = ({
       )}
       <Box marginTop={1} />
 
-      {/* Quick-select suggestions (when available and active) */}
       {hasSuggestions && useSuggestions && (
         <>
           <Text dimColor>Suggestions (↑↓ to select, Enter to use, Tab to type your own):</Text>
@@ -78,7 +68,6 @@ export const ClarificationPrompt: React.FC<ClarificationPromptProps> = ({
         </>
       )}
 
-      {/* Free-form text input — always available */}
       {(!hasSuggestions || !useSuggestions) && (
         <>
           <Text dimColor>
@@ -98,8 +87,6 @@ export const ClarificationPrompt: React.FC<ClarificationPromptProps> = ({
     </Box>
   );
 };
-
-// ── Fix Confirmation Prompt ───────────────────────────────────────
 
 interface FixConfirmPromptProps {
   request: FixConfirmRequest;
@@ -134,8 +121,6 @@ export const FixConfirmPrompt: React.FC<FixConfirmPromptProps> = ({
     </Box>
   );
 };
-
-// ── Tool Approval Prompt ─────────────────────────────────────────
 
 interface ApprovalPromptProps {
   request: ApprovalRequest;

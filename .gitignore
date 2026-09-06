@@ -41,6 +41,7 @@ Thumbs.db
 .cox-sandbox/
 *.checkpoint
 .gemini-style/
+.claude
 
 # Telemetry/cache
 .cache/

@@ -1,16 +1,7 @@
-/**
- * Codexrev — Control Panel (in-TUI settings dashboard).
- *
- * A full-screen overlay opened with Ctrl+S or `/config`. Shows the live
- * sandbox status and lets the user edit the settings that matter during
- * a session — sandbox backend, tool-approval policy / YOLO bypass,
- * theme, and the agent knobs — then persist them to disk.
- *
- *   ↑/↓  move between rows
- *   ←/→  change the focused value   (Enter / Space also toggles booleans)
- *   S    save changes to ~/.codexrev/settings.json
- *   Esc  close (unsaved edits are reverted)
- */
+// Full-screen settings overlay (Ctrl+S or /config). Lets you flip sandbox
+// mode, approval policy/YOLO, theme, and the agent knobs without restarting,
+// and save them to ~/.codexrev/settings.json.
+// keys: up/down move, left/right change, enter/space toggles, s saves, esc closes (discards unsaved edits)
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
@@ -23,9 +14,7 @@ import type { SandboxManager, SandboxProbe } from '../sandbox/index.js';
 interface ControlPanelProps {
   settings: Settings;
   sandbox: SandboxManager;
-  /** Apply an edit to the running session immediately. */
-  onChange: (next: Settings) => void;
-  /** Persist current settings to disk. Resolves when written. */
+  onChange: (next: Settings) => void; // applies live, before it's saved
   onSave: (settings: Settings) => Promise<void>;
   onClose: () => void;
 }
@@ -158,7 +147,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   onSave,
   onClose,
 }) => {
-  const initial = useMemo(() => settings, []); // snapshot for Esc-revert
+  const initial = useMemo(() => settings, []); // so Esc has something to revert to
   const [draft, setDraft] = useState<Settings>(settings);
   const [focus, setFocus] = useState(0);
   const [dirty, setDirty] = useState(false);
@@ -167,6 +156,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
 
   const [effective, setEffective] = useState<string>(sandbox.getMode());
   const [probe, setProbe] = useState<SandboxProbe | null>(null);
+  // re-probe whenever the mode changes so "effective" stays accurate
   useEffect(() => {
     let alive = true;
     void Promise.all([sandbox.effectiveMode(), sandbox.probe()]).then(([eff, p]) => {
@@ -177,7 +167,6 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
     return () => {
       alive = false;
     };
-    // re-probe when the sandbox mode changes
   }, [sandbox, draft.sandbox]);
 
   const apply = (next: Settings) => {

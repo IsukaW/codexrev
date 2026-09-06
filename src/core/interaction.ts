@@ -1,10 +1,5 @@
-/**
- * Codexrev — interaction channel for mid-run pauses.
- *
- * Provides an async producer-consumer mechanism for the agent pipeline
- * to pause and wait on user input (clarification questions, fix-confirm
- * decisions). The UI subscribes to events and sends responses back.
- */
+// Lets the agent pipeline pause and wait on user input (clarifications, fix-confirm
+// decisions) via a plain event emitter — UI subscribes to events, sends responses back.
 
 import { EventEmitter } from 'node:events';
 
@@ -25,15 +20,10 @@ export interface FixConfirmRequest {
   readonly status: 'red' | 'green' | 'checking';
 }
 
-/**
- * A pending approval gate shown after one stage of a multi-stage
- * pipeline finishes (e.g. Feature 2's review pipeline, after every
- * role). Deliberately generic — no Feature-2-specific `Finding[]` shape
- * here, so this stays usable by any future multi-stage pipeline; the
- * caller that owns the richer payload (e.g. the review CLI) renders
- * "Details" itself from data it already has, rather than round-tripping
- * it through this channel.
- */
+// Shown after one stage of a multi-stage pipeline finishes (e.g. Feature 2's review
+// pipeline, after every role). Kept generic on purpose — no Finding[] shape baked in
+// here — so the caller that owns the richer payload renders "Details" itself instead
+// of round-tripping it through this channel.
 export interface StageGateRequest {
   readonly id: string;
   /** Machine identifier for the stage that just finished (e.g. a RoleId). */
@@ -67,18 +57,14 @@ export type InteractionEvent =
   | { type: 'approval_request'; request: ApprovalRequest }
   | { type: 'abort' };
 
-/**
- * Shared channel between the pipeline and the UI.
- *
- * The pipeline calls `requestClarification()` / `requestFixConfirmation()`
- * which return Promises that block until the UI calls `respond*()`.
- */
+// Shared channel between the pipeline and the UI. Pipeline calls request*(), gets a
+// Promise back that resolves once the UI calls the matching respond*().
 export class InteractionChannel {
   private readonly emitter = new EventEmitter();
   private nextId = 1;
   private aborted = false;
 
-  // ── Pipeline side (producer) ────────────────────────────────────
+  // pipeline side (producer)
 
   /** Ask the user a clarification question. Blocks until answered. */
   requestClarification(
@@ -133,12 +119,8 @@ export class InteractionChannel {
     });
   }
 
-  /**
-   * Ask the user to continue/see details/skip the rest/abort after one
-   * pipeline stage finishes. Blocks until answered. On 'details' the
-   * caller is expected to render more info and call this again for the
-   * same stage — this method itself does not loop.
-   */
+  // continue/see details/skip/abort after a stage finishes. On 'details' the caller
+  // re-renders and calls this again for the same stage — no looping happens in here.
   requestStageGate(
     stage: string,
     stageLabel: string,
@@ -165,11 +147,8 @@ export class InteractionChannel {
     });
   }
 
-  /**
-   * Ask the user to approve a single tool invocation. Blocks until the
-   * UI responds. Returns the raw decision so the caller can implement
-   * "approve for the rest of this session".
-   */
+  // returns the raw decision so the caller can implement "approve for the rest of
+  // this session" itself
   requestApproval(toolName: string, summary: string): Promise<ApprovalDecision> {
     if (this.aborted) return Promise.resolve('deny');
 
@@ -191,7 +170,7 @@ export class InteractionChannel {
     });
   }
 
-  // ── UI side (consumer) ──────────────────────────────────────────
+  // UI side (consumer)
 
   /** Subscribe to interaction events from the pipeline. */
   onInteraction(handler: (event: InteractionEvent) => void): () => void {

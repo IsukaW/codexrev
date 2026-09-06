@@ -1,49 +1,28 @@
-/**
- * Codexrev — provider metadata registry.
- *
- * Single source of truth for everything the rest of the codebase needs to
- * know about a provider without instantiating the adapter:
- *
- *   - the hard-coded default base URL (when no env var or settings key overrides it)
- *   - the default model name used in DEFAULT_SETTINGS
- *   - whether the provider requires an API key (local servers do not)
- *   - the env var names for key + base URL (when applicable)
- *   - capability flags used by the agent loop and embedders
- *
- * Adding a new provider = one new entry here. The factory in
- * `./index.ts` reads `PROVIDER_IDS` so the TypeScript exhaustiveness
- * check enforces that every entry has a constructor case.
- */
+// Single source of truth for provider metadata without instantiating the adapter:
+// default base URL, default model, whether it needs an API key, env var names,
+// capability flags. Add a provider by adding one entry here — index.ts reads
+// PROVIDER_IDS so TS exhaustiveness checking forces a constructor case too.
 
 import type { ProviderId } from '../core/types.js';
 
-/**
- * Per-request client timeout applied automatically to local model servers
- * (Ollama, LM Studio, LiteLLM) when the user doesn't set one explicitly.
- * The OpenAI SDK's own default is 10 minutes, which a larger local model
- * on modest hardware can genuinely exceed without being stuck — this is
- * NOT a hang-detection value, just enough slack for a slow-but-honest
- * response. Cloud providers keep the SDK default (fast APIs, no need).
- */
+// applied to local model servers (Ollama/LM Studio/LiteLLM) when the user hasn't set
+// their own. SDK default is 10min, which a big model on slow hardware can genuinely
+// blow past without actually being stuck — this just buys slack, it's not a hang
+// detector. Cloud providers keep the SDK default since they're fast anyway.
 export const DEFAULT_LOCAL_TIMEOUT_MS = 30 * 60_000;
 
 export interface ProviderMeta {
   readonly id: ProviderId;
-  /** Human-readable label shown in CLI help and the init wizard. */
   readonly label: string;
-  /** Hard-coded fallback base URL when nothing else is configured. May be empty for providers that set baseUrl elsewhere (e.g. Google Vertex). */
+  /** may be empty for providers that set baseUrl elsewhere, e.g. Google Vertex */
   readonly defaultBaseUrl: string;
-  /** Default model name used by `DEFAULT_SETTINGS`. */
   readonly defaultModel: string;
-  /** Whether the adapter refuses to function without an API key. */
   readonly requiresApiKey: boolean;
-  /** Env var holding the API key. Absent when `requiresApiKey === false`. */
+  /** absent when requiresApiKey is false */
   readonly envKeyVar?: string;
-  /** Env var holding the base URL. Absent when the provider has no base-URL knob. */
+  /** absent when there's no base-URL knob */
   readonly envBaseUrlVar?: string;
-  /** Whether the adapter advertises tools/function-calling. */
   readonly supportsTools: boolean;
-  /** Whether `stream()` populates `usage` on the `finish` event. */
   readonly supportsStreamingUsage: boolean;
 }
 
@@ -126,15 +105,14 @@ export const PROVIDER_REGISTRY: Readonly<Record<ProviderId, ProviderMeta>> = {
   },
 };
 
-/** Tuple of every provider id, in registration order. Useful for `choices` arrays. */
+// every provider id, in registration order — handy for `choices` arrays
 export const PROVIDER_IDS = Object.keys(PROVIDER_REGISTRY) as ProviderId[];
 
-/** Predicate equivalent to `id in PROVIDER_REGISTRY`. */
 export function isProviderId(s: string | undefined): s is ProviderId {
   return !!s && s in PROVIDER_REGISTRY;
 }
 
-/** Lookup helper — throws if the entry is missing (which the type system normally prevents). */
+// throws if missing, which the type system shouldn't normally let happen
 export function providerMeta(id: ProviderId): ProviderMeta {
   const meta = PROVIDER_REGISTRY[id];
   if (!meta) throw new Error(`unknown provider: ${String(id)}`);

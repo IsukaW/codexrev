@@ -1,13 +1,8 @@
-/**
- * Codexrev — QA Engineer (QA) role.
- *
- * Fifth role in the pipeline. Adversarial-testing lens: mutation-testing
- * mindset (what input would make this code produce a wrong result
- * without crashing?) and regression risk. Weighted 0.15 in the default
- * Resolver. Per Section 2's conflict rules, a finding that both BA and
- * QA flag independently gets its severity bumped by one level — that
- * rule lives in Phase 6's Resolver, not here.
- */
+// QA Engineer role — fifth in the pipeline. Adversarial-testing lens:
+// mutation-testing mindset (what input makes this code produce a wrong result
+// without crashing?) plus regression risk. Weighted 0.15 by default. A finding
+// that both BA and QA flag independently gets bumped a severity level, but
+// that rule actually lives in the resolver, not here.
 
 import type { RoleOutput } from './roleContract.js';
 import type { RoleRunContext } from '../pipeline/roleRunContext.js';

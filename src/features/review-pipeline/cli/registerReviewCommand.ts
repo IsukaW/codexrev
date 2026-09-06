@@ -1,22 +1,13 @@
 /**
- * Codexrev — `review` command registration (Feature 2: review pipeline).
- *
- * Registers `codexrev review scan` as a yargs command, mirroring the
- * builder pattern already used for `extensions`/`models` in
- * `src/cli/index.ts`. Kept in its own module (Section 4 of the Feature 2
- * dev guide) so `src/cli/index.ts` only wires it in, it doesn't define it.
+ * Registers `codexrev review scan` as a yargs command, same builder pattern
+ * as extensions/models in src/cli/index.ts. Kept separate so index.ts just
+ * wires it in instead of defining it inline.
  */
 
 import type { Argv } from 'yargs';
 
-/**
- * Builder passed to `.command('review', description, reviewCommandBuilder)`
- * in `src/cli/index.ts`. Deliberately has no `.demandCommand(1)` at this
- * level (unlike `extensions`) — that combination currently breaks
- * `codexrev <cmd> --help` before the hand-rolled help screen ever runs
- * (see Phase 0 note); `models` avoids the same trap, and `review` follows
- * that pattern instead.
- */
+// no .demandCommand(1) here on purpose — like `models`, that breaks
+// `codexrev <cmd> --help` before the hand-rolled help screen runs
 export function reviewCommandBuilder<T>(y: Argv<T>): Argv<T> {
   return y.command('scan', 'Run the six-role review pipeline against a diff', (yy) =>
     yy

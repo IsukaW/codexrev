@@ -1,9 +1,4 @@
-/**
- * Codexrev — built-in tool implementations.
- *
- * Exports `builtinTools(settings)` which returns a list of fully
- * implemented `Tool` objects. The model can call any of these.
- */
+// builtinTools(settings) returns the fully implemented Tool objects the model can call.
 
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -26,7 +21,7 @@ import {
 } from './specs.js';
 import type { ToolDeclaration } from '../core/types.js';
 
-/** Ask for approval via `ctx.ask` if wired; `true` when there is no gate. */
+// goes through ctx.ask if it's wired up; otherwise there's no gate, so just allow it
 async function approved(ctx: ToolContext, toolName: string, args: unknown): Promise<boolean> {
   if (!ctx.ask) return true;
   return ctx.ask(toolName, args);
@@ -118,12 +113,8 @@ const editImpl: Tool = {
   },
 };
 
-/**
- * Build the shell tool bound to a sandbox backend. Every command runs
- * through the configured sandbox (`SandboxManager`); the result metadata
- * (`sandbox`, `durationMs`, `exitCode`) is surfaced to the TUI so it can
- * render live execution cards.
- */
+// Every command goes through the configured SandboxManager; metadata (sandbox,
+// durationMs, exitCode) comes back so the TUI can render live execution cards.
 function makeShellTool(sandbox: SandboxManager): Tool {
   return {
     name: ShellTool.name,
@@ -241,7 +232,7 @@ const webSearchImpl: Tool = {
   async execute(args) {
     const { query } = (args ?? {}) as { query: string; num_results?: number };
     if (!query) throw new ToolError('web_search', 'query is required');
-    // Use DuckDuckGo HTML endpoint as a free, no-key fallback.
+    // DuckDuckGo's HTML endpoint — free, no API key needed
     const u = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
     const res = await fetch(u, { headers: { 'User-Agent': 'codexrev/0.1' } });
     if (!res.ok) return { output: `HTTP ${res.status}`, isError: true };
@@ -252,7 +243,7 @@ const webSearchImpl: Tool = {
 };
 
 export interface BuiltinToolDeps {
-  /** Shared sandbox manager so live Control-Panel mode changes take effect. */
+  /** shared so a live Control Panel mode change actually takes effect */
   sandbox?: SandboxManager;
 }
 

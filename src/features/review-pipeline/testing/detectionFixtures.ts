@@ -1,18 +1,9 @@
-/**
- * Codexrev — review pipeline evaluation fixtures & harness.
- *
- * Shared between `scripts/evaluateReviewPipeline.ts` (the standalone script that
- * produces the results-table numbers for the write-up) and
- * `tests/features/review-pipeline/liveDetection.test.ts` (the opt-in,
- * real-model integration test called for by Phase 10's "New" bullet
- * 2 — "confirming the Sec/QA roles catch them"). Defined once here so
- * the two never drift apart on what "the synthetic diffs" actually are.
- *
- * Every fixture is small and single-issue on purpose — this is not (and
- * does not claim to be) the Juliet Test Suite / NIST SARD corpus (see
- * `docs/review-pipeline-evaluation-results.md` for that gap, tracked
- * explicitly rather than silently skipped).
- */
+// Shared fixtures/harness for evaluateReviewPipeline.ts (the results-table script)
+// and liveDetection.test.ts (opt-in real-model integration test) so both agree
+// on what "the synthetic diffs" actually are.
+//
+// Fixtures are deliberately small, single-issue — this is not the Juliet Test
+// Suite / NIST SARD corpus, that gap is tracked in docs/review-pipeline-evaluation-results.md.
 
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
@@ -29,8 +20,7 @@ export interface DetectionFixture {
   readonly name: string;
   readonly file: string;
   readonly content: string;
-  /** Which role is expected to flag it (verdict !== 'pass'), or null for a clean baseline (expected to stay all-pass). */
-  readonly expectRole: RoleId | null;
+  readonly expectRole: RoleId | null; // which role should flag it, or null for a clean baseline
 }
 
 export const DETECTION_FIXTURES: readonly DetectionFixture[] = [
@@ -80,13 +70,14 @@ export const DETECTION_FIXTURES: readonly DetectionFixture[] = [
   },
 ];
 
-/** A separate fixture for the Breaker-Builder convergence measurement — one deterministic-fixable finding (TS7006). */
+// separate fixture for the breaker-builder convergence measurement — one
+// deterministic-fixable finding (TS7006)
 export const CONVERGENCE_FIXTURE_FILES: Readonly<Record<string, string>> = {
   'tsconfig.json': JSON.stringify({ compilerOptions: { strict: true, noEmit: true } }, null, 2),
   'greet.ts': `export function greet(name) {\n  return "Hello, " + name;\n}\n`,
 };
 
-/** Writes `files` to a fresh tmp git repo and stages them. Returns the realpath'd repo root. */
+// writes files to a fresh tmp git repo and stages them, returns the realpath'd root
 export async function makeFixtureRepo(files: Readonly<Record<string, string>>): Promise<string> {
   const raw = await fs.mkdtemp(path.join(os.tmpdir(), 'codexrev-phase10-'));
   const cwd = await fs.realpath(raw); // avoid a /tmp→/private/tmp symlink mismatch against git's resolved repo root
@@ -108,19 +99,13 @@ export interface DetectionResult {
   readonly latencyMs: number;
 }
 
-/**
- * Generous per-request timeout for this harness's own calls — a local
- * model (the default target) can be genuinely slow, not hung, on
- * modest hardware. Reported live: the OpenAI-compat SDK's fixed 10-min
- * default killed legitimately-in-progress requests against a local 12B
- * model. `ContentGeneratorConfig.timeoutMs` (added specifically for
- * this) overrides it; 30 min is deliberately generous rather than
- * tightly tuned, since a timeout here should only ever fire for an
- * actually-hung request, not a slow-but-working one.
- */
+// 30 min timeout — a local model on modest hardware can be genuinely slow, not
+// hung. The OpenAI-compat SDK's fixed 10-min default was killing legit
+// in-progress requests against a local 12B model, so this should only ever
+// fire for something actually stuck.
 const FIXTURE_TIMEOUT_MS = 30 * 60_000;
 
-/** Builds an `ILLMProvider` targeting `providerId`/`model`, independent of any locally saved settings. */
+// builds an ILLMProvider for providerId/model, independent of any saved settings
 export function fixtureLlmProvider(providerId: ProviderId, model: string) {
   return createLLMProvider({
     ...DEFAULT_SETTINGS,
@@ -132,7 +117,7 @@ export function fixtureLlmProvider(providerId: ProviderId, model: string) {
   });
 }
 
-/** Runs the full six-role pipeline against one detection fixture with a REAL provider. Cleans up its tmp repo before returning. */
+// runs the full pipeline against one fixture with a real provider, cleans up the tmp repo after
 export async function runDetectionFixture(
   fixture: DetectionFixture,
   providerId: ProviderId,
@@ -147,14 +132,10 @@ export async function runDetectionFixture(
     const result = await runPipeline({ diff, llm, model, cwd });
     const latencyMs = Date.now() - start;
 
-    // A pipeline that didn't complete (a role errored, e.g. the model
-    // was unloaded/unreachable mid-run) leaves the aggregator with
-    // FEWER role outputs than six — sometimes zero. Reading "flagged"
-    // off that partial set without checking `outcome` first would
-    // silently report a crash as a clean pass (an empty output set has
-    // no non-'pass' verdicts to find) — exactly the kind of fabricated
-    // "it works" result this whole harness exists to avoid. Throw
-    // instead, loudly, with the real cause attached.
+    // if a role errored mid-run the aggregator has fewer than six outputs,
+    // sometimes zero — reading "flagged" off that without checking outcome
+    // would quietly report a crash as a clean pass, which defeats the point
+    // of this harness. throw loudly instead.
     if (result.outcome !== 'completed') {
       const detail = result.outcome === 'errored' ? `: ${(result.error as Error | undefined)?.message ?? String(result.error)}` : '';
       throw new Error(

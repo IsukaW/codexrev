@@ -1,37 +1,19 @@
-/**
- * Codexrev — Feature 2 (review-pipeline) shared LLM-role runner.
- *
- * Five of the six roles (`ba`, `dev`, `sec`, `qa`, `pm` — everything but
- * the deterministic `build` role) are "call the model, get JSON back" —
- * but as of this revision, the model can call read-only tools
- * (`read_file`, `glob`, `grep`, reused from `src/tools/builtin.ts`) on
- * its way there. The diff alone can't show a role that a changed
- * function is called from three other files, or that a "fix" for file A
- * would break file B — those files aren't in the diff at all. Giving
- * roles the same read-only tool access the Ask/Plan modes already have
- * (`core/modes.ts`'s `filterReadOnlyTools` covers the same three tools)
- * lets them actually check before verdicting, instead of guessing from
- * a diff in isolation.
- *
- * This module is the one place that:
- *   - formats the diff + accumulated context into a prompt,
- *   - appends the shared JSON-contract instructions (identical wording
- *     for every role, so the model always sees the same schema),
- *   - runs the tool-call loop against `ILLMProvider` (bounded by
- *     `MAX_TOOL_TURNS` — a role exploring the repo is still a single
- *     scan step, not an open-ended agent session),
- *   - extracts + validates the final JSON reply against `roleContract.ts`,
- *     with exactly one corrective retry (`requestCorrectiveJson`) if that
- *     fails — needed in practice because some local models (seen with an
- *     Ollama-served model) don't reliably use real structured tool
- *     calling and instead write out a fake tool call as plain text (e.g.
- *     Llama's `<tool_call><function=...>` chat-template convention),
- *     which lands as ordinary response text rather than a real tool call.
- *
- * Keeping this in one module (instead of duplicating prompt/parsing/
- * tool-loop logic across `roles/ba.ts`, `dev.ts`, etc.) is exactly the
- * kind of duplication the Dev role itself would flag.
- */
+// Shared runner for the five LLM roles (everything but the deterministic build
+// role). Model can call read-only tools (read_file/glob/grep, from builtin.ts)
+// before answering — the diff alone can't tell a role that a changed function
+// is called from three other files, so it needs to be able to check.
+//
+// This module owns: formatting diff + accumulated context into a prompt,
+// appending the shared JSON-contract instructions (same wording for every
+// role), running the tool-call loop (capped by MAX_TOOL_TURNS — a role
+// exploring the repo is still one scan step, not an open-ended session), and
+// validating the final JSON against roleContract.ts with one corrective retry
+// if parsing fails. The retry matters in practice — some local/Ollama models
+// don't do real structured tool calling and just write out a fake tool call
+// as text (Llama's <tool_call> chat template thing), which shows up as plain
+// response text instead of an actual tool call.
+//
+// Kept in one place instead of copy-pasted across roles/ba.ts, dev.ts, etc.
 
 import {
   ROLE_LABELS,
@@ -47,13 +29,10 @@ import type { ContentPart, Message, TextPart, ToolCallPart, ToolDeclaration } fr
 import type { DiffFile, ParsedDiff } from './diffReader.js';
 import type { RoleRunContext } from './roleRunContext.js';
 
-// ── Read-only tool access ────────────────────────────────────────────
-
-/** Same three tools `core/modes.ts`'s Ask/Plan modes are restricted to — read-only, no repo mutation. */
+// same three read-only tools Ask/Plan modes are restricted to
 const ROLE_TOOL_NAMES = ['read_file', 'glob', 'grep'] as const;
 
-/** Hard cap on tool round-trips per role, per scan — a review step, not an open-ended agent session. */
-const MAX_TOOL_TURNS = 6;
+const MAX_TOOL_TURNS = 6; // cap tool round-trips per role per scan
 
 function roleTools(): Tool[] {
   const names: readonly string[] = ROLE_TOOL_NAMES;
@@ -64,15 +43,9 @@ function roleToolDeclarations(): readonly ToolDeclaration[] {
   return roleTools().map((t) => t.declaration);
 }
 
-// ── Diff / context formatting ───────────────────────────────────────
-
-/**
- * Renders a `ParsedDiff` with explicit per-line numbers computed by
- * `diffReader.ts`, instead of leaving the model to count lines from
- * raw `@@ -a,b +c,d @@` hunk headers. Findings' `lineStart`/`lineEnd`
- * feed Phase 7's change-coverage map, so precision here matters more
- * than it would for a purely illustrative diff view.
- */
+// renders with explicit per-line numbers instead of making the model count
+// from @@ -a,b +c,d @@ headers itself — findings' line numbers feed the
+// change-coverage map later so they need to actually be right
 export function formatDiffForPrompt(diff: ParsedDiff): string {
   if (diff.files.length === 0) return '(no changes)';
 
@@ -105,7 +78,7 @@ function formatFileForPrompt(file: DiffFile): string {
   return [header, ...hunkLines].join('\n');
 }
 
-/** Renders every prior role's completed output, in the order they ran — the "context accumulation." */
+// renders every prior role's output in the order they ran
 export function formatPriorContextForPrompt(ctx: RoleRunContext): string {
   const completed = ctx.aggregator.completedRoles;
   if (completed.length === 0) return '(no prior role findings yet — you are the first role to run)';
@@ -132,15 +105,8 @@ function formatRoleOutputForPrompt(role: RoleId, output: RoleOutput): string {
   return lines.join('\n');
 }
 
-// ── Shared JSON-contract instructions ───────────────────────────────
-
-/**
- * Appended to every LLM role's system prompt. Identical wording across
- * roles keeps the contract predictable for the model and for
- * `validateRoleOutput()`. The plain-English requirement is the
- * proposal's Usability NFR — this is where it's enforced at the prompt
- * level, not just in report rendering later.
- */
+// appended to every role's system prompt — same wording everywhere keeps the
+// contract predictable both for the model and for validateRoleOutput()
 export function roleContractInstructions(role: RoleId): string {
   return `
 You have read-only tools available: read_file, glob, and grep. Use them when the diff alone isn't enough to judge a change safely — for example, to check where a changed function is called from elsewhere in the repo, to see the full definition of a type/class only partially shown in the diff, or to check whether a change could break a file that ISN'T part of this diff. Do not guess about code you haven't looked at when a quick read_file/grep would tell you for certain. Call tools as many times as you need (there is a turn limit, so be purposeful), then STOP calling tools and respond with ONLY the final JSON object described below — no further tool calls after that point.
@@ -174,17 +140,10 @@ Rules:
 `.trim();
 }
 
-// ── JSON extraction ─────────────────────────────────────────────────
-
 export class LlmRoleResponseError extends RoleContractError {}
 
-/**
- * Extracts a JSON object from an LLM's raw text reply. Tries a strict
- * parse first (the common case, since the prompt asks for JSON only),
- * then falls back to stripping a markdown code fence, then to the
- * outermost `{...}` span — models occasionally add a stray sentence
- * despite instructions not to.
- */
+// strict parse first, then strip a markdown fence, then grab the outermost
+// {...} span — models sometimes add a stray sentence anyway
 export function extractJson(text: string): unknown {
   const trimmed = text.trim();
 
@@ -227,7 +186,7 @@ function extractToolCalls(parts: readonly ContentPart[]): ToolCallPart[] {
   return parts.filter((p): p is ToolCallPart => p.kind === 'tool_call');
 }
 
-/** Executes one tool call against the role's read-only tool set, never throwing — errors become a tool result the model can react to. */
+// never throws — errors get turned into a tool result the model can react to
 async function executeRoleToolCall(call: ToolCallPart, tools: ReadonlyMap<string, Tool>, cwd: string): Promise<string> {
   const tool = tools.get(call.name);
   if (!tool) return `Error: unknown tool "${call.name}". Available tools: ${[...tools.keys()].join(', ')}.`;
@@ -242,17 +201,12 @@ async function executeRoleToolCall(call: ToolCallPart, tools: ReadonlyMap<string
 
 interface ToolLoopResult {
   readonly text: string;
-  /** Full conversation so far, including the final assistant turn — reused for the corrective retry in `runLlmRole` if `text` isn't valid JSON. */
-  readonly messages: Message[];
+  readonly messages: Message[]; // full conversation, reused for the corrective retry if text isn't valid JSON
 }
 
-/**
- * Runs the tool-call loop: sends `messages` + the role's read-only
- * tools, executes any tool calls the model makes and feeds the results
- * back, and returns the model's final text once it stops calling tools
- * (or `MAX_TOOL_TURNS` is hit, in which case one last no-tools call
- * forces a final answer).
- */
+// sends messages + the role's tools, runs any tool calls the model makes and
+// feeds results back, returns final text once it stops calling tools (or
+// forces an answer with one last no-tools call once MAX_TOOL_TURNS is hit)
 async function runToolLoop(systemInstruction: string, initialUserPrompt: string, ctx: RoleRunContext): Promise<ToolLoopResult> {
   const tools = new Map(roleTools().map((t) => [t.name, t]));
   const declarations = roleToolDeclarations();
@@ -282,25 +236,17 @@ async function runToolLoop(systemInstruction: string, initialUserPrompt: string,
     }
   }
 
-  // Turn budget exhausted — ask once more without `tools` so the model
-  // must answer from what it already gathered, rather than looping forever.
+  // budget's up — ask once more without tools so it has to answer from what it's got
   const finalRes = await ctx.llm.generate({ model: ctx.model, systemInstruction, messages, temperature: 0.2 });
   messages.push({ role: 'assistant', parts: finalRes.message.parts });
   return { text: extractText(finalRes.message.parts), messages };
 }
 
-/**
- * One corrective retry when the model's "final" text isn't valid JSON —
- * most often because a model without reliable native tool-calling wrote
- * out a fake tool call as plain text instead of using the real
- * `tool_calls` mechanism (seen in practice with some local/Ollama-served
- * models using a Llama-style `<tool_call>...</tool_call>` chat-template
- * convention that never reaches the API as a structured call). Rather
- * than pattern-matching every local model's own hallucinated tool-call
- * syntax, this just tells the model plainly what went wrong and asks
- * again with `tools` omitted, forcing a real answer. Exactly one retry —
- * if this also fails to parse, the caller's error is the real error.
- */
+// one retry when the "final" text isn't valid JSON — usually a model without
+// reliable tool-calling wrote a fake <tool_call> as plain text instead of a
+// real structured call. Rather than trying to pattern-match every model's own
+// hallucinated syntax, just tell it what went wrong and ask again with no
+// tools. If this fails too, the caller's error is the real error.
 async function requestCorrectiveJson(
   systemInstruction: string,
   messages: readonly Message[],
@@ -323,16 +269,9 @@ async function requestCorrectiveJson(
   return extractJson(extractText(res.message.parts));
 }
 
-// ── The shared runner ────────────────────────────────────────────────
-
-/**
- * Calls the model for one LLM-backed role and returns a validated
- * `RoleOutput`. `roleSystemPrompt` is that role's own lens (e.g. the Sec
- * role's OWASP/CVSS framing) — this function appends the shared JSON
- * contract instructions on top of it, and runs the read-only tool loop
- * (`read_file`/`glob`/`grep`) so the role can inspect the wider repo,
- * not just the diff, before verdicting.
- */
+// calls the model for one LLM role and returns a validated RoleOutput.
+// roleSystemPrompt is that role's own lens (e.g. Sec's OWASP/CVSS framing);
+// this appends the shared contract instructions and runs the tool loop.
 export async function runLlmRole(
   role: RoleId,
   roleSystemPrompt: string,
@@ -373,5 +312,4 @@ ${formatPriorContextForPrompt(ctx)}
   return parsed;
 }
 
-/** Re-exported for role files that want the fixed execution order without a second import. */
-export { ROLE_ORDER };
+export { ROLE_ORDER }; // re-exported so role files don't need a second import for it

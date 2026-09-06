@@ -1,13 +1,7 @@
-/**
- * Codexrev — Security Auditor (Sec) role.
- *
- * Fourth role in the pipeline (runs after the deterministic Build
- * role). OWASP/CVSS-referenced lens with CWE mapping on findings.
- * Weighted 0.3 in the default Resolver, and per the Section 2 conflict
- * rules, Sec always wins on exploitability regardless of raw weight —
- * that rule lives in Phase 6's Resolver, not here; this role's job is
- * just to find and score the issues accurately.
- */
+// Security Auditor role — fourth, runs after the deterministic Build role.
+// OWASP/CVSS lens with CWE mapping on findings. Weighted 0.3 by default, and
+// Sec's own 'block' verdict always wins on exploitability regardless of raw
+// weight — that override lives in the resolver though, not here.
 
 import type { RoleOutput } from './roleContract.js';
 import type { RoleRunContext } from '../pipeline/roleRunContext.js';

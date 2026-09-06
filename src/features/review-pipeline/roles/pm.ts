@@ -1,14 +1,11 @@
 /**
  * Codexrev — Director of Engineering (PM) role.
  *
- * Sixth and final role in the pipeline. Synthesizes everything the
- * other five roles found into an overall narrative verdict. Important:
- * this role does NOT compute the pipeline's final Approve/Request
- * Changes/Block decision — that's the weighted Resolver Engine (Phase
- * 6), which reads all six `RoleOutput`s including this one. PM is
- * weighted lowest (0.05) precisely because it's a synthesis, not a
- * fresh independent finding pass — the Resolver is what actually
- * decides.
+ * Sixth and final role. Synthesizes what the other five found into an
+ * overall narrative verdict. Doesn't compute the final Approve/Request
+ * Changes/Block decision though — that's the resolver, reading all six
+ * RoleOutputs including this one. PM is weighted lowest (0.05) since it's
+ * a synthesis, not a fresh independent finding pass.
  */
 
 import type { RoleOutput } from './roleContract.js';

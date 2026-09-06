@@ -1,11 +1,6 @@
-/**
- * Codexrev — agent turn manager.
- *
- * The "turn" is a single user → model → tool(s) → model exchange. The
- * agent loop keeps running turns until the model emits `stop` or the
- * user aborts. Streaming yields a stream of `AgentEvent`s the UI can
- * render in real-time.
- */
+// A "turn" is one user -> model -> tool(s) -> model exchange. The loop keeps running
+// turns until the model stops or the user aborts; streaming mode yields AgentEvents
+// as they happen so the UI can render live.
 
 import type {
   ContentGenerator,
@@ -30,7 +25,7 @@ export type AgentEvent =
   | { kind: 'usage'; usage: UsageStats }
   | { kind: 'turn_complete'; turns: number; reason: string }
   | { kind: 'error'; error: ProviderError }
-  // ── Pipeline & fix-loop events ────────────────────────────────
+  // pipeline / fix-loop events
   | { kind: 'pipeline_phase'; phase: 'committee' | 'breaker-builder' | 'resolver'; description: string }
   | { kind: 'fix_iteration'; attempt: number; maxAttempts: number; status: 'red' | 'green' | 'checking'; summary: string }
   | { kind: 'clarification_prompt'; question: string; suggestions: readonly string[] }
@@ -52,25 +47,18 @@ export interface RunAgentOptions {
   settings: Settings;
   stream: boolean;
   signal?: AbortSignal;
-  /** Extra system-prompt text appended for the current mode. */
+  /** extra system-prompt text for the current mode */
   systemPromptSuffix?: string;
-  /** Override the default system instruction entirely (used by pipeline phases). */
+  /** replaces the default system instruction entirely — pipeline phases use this */
   systemInstructionOverride?: string;
-  /**
-   * Prior conversation messages to prepend as context.
-   * Used when switching modes (e.g. Plan → Agent) so the agent
-   * can see what was discussed / planned in the previous mode.
-   */
+  // prior messages to prepend, e.g. when switching Plan -> Agent so the agent still
+  // sees what was discussed/planned
   contextMessages?: Message[];
-  /**
-   * When present, mutating tools (shell / write_file / edit) are gated
-   * through `interactionChannel.requestApproval()` unless approval is
-   * disabled by `settings.bypassApprovals` or `settings.approvalMode`.
-   */
+  // when set, mutating tools (shell/write_file/edit) get gated through
+  // interactionChannel.requestApproval() unless bypassApprovals/approvalMode says otherwise
   interactionChannel?: InteractionChannel;
 }
 
-/** Build a system instruction that includes the current working directory. */
 function buildSystemInstruction(settings: Settings, suffix?: string): string {
   const parts = [
     'You are Codexrev, a multi-provider agentic CLI assistant.',
@@ -95,15 +83,12 @@ async function executeToolCall(
   if (builtin) {
     return await builtin.execute(call.arguments, ctx);
   }
-  // Otherwise, route to MCP
+  // not a builtin, so it must be an MCP tool
   return await mcp.callTool(call.name, call.arguments);
 }
 
-/**
- * Run the agent loop until the model emits `stop`, hits max turns,
- * or is aborted. With `stream: false` returns a final `AgentResult`;
- * with `stream: true` returns an async iterable of `AgentEvent`s.
- */
+// runs until the model stops, hits max turns, or gets aborted. stream:false collects
+// everything into an AgentResult; stream:true gives back the raw AgentEvent iterable.
 export function runAgent(opts: RunAgentOptions & { stream: false }): Promise<AgentResult>;
 export function runAgent(opts: RunAgentOptions & { stream: true }): AsyncIterable<AgentEvent>;
 export function runAgent(
@@ -277,7 +262,7 @@ async function* streamAgent(
   yield { kind: 'turn_complete', turns, reason: 'max_turns' };
 }
 
-/** One-line human summary of a tool call, for the approval prompt. */
+// one-line summary of a tool call for the approval prompt
 function describeToolCall(toolName: string, args: unknown): string {
   const a = (args ?? {}) as Record<string, unknown>;
   if (toolName === 'shell' && typeof a.command === 'string') return a.command;

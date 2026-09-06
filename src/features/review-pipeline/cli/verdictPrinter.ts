@@ -1,15 +1,8 @@
 /**
- * Codexrev — review-pipeline verdict printer.
- *
- * Plain-ANSI console output for `codexrev review scan`, matching the
- * hand-rolled palette style already used by `src/cli/help.ts` (no chalk
- * dependency, colors auto-disabled off a TTY).
- *
- * Non-interactive mode only — interactive mode renders the equivalent
- * (verdict lines, findings detail, final outcome) inside the persistent
- * `ReviewSessionView` Ink tree instead, so its output survives sharing
- * one screen with `SelectInput`'s raw-mode stdin. See that file's
- * docstring for why a fresh Ink mount per line/gate isn't used here.
+ * Plain-ANSI console output for `codexrev review scan`, same hand-rolled
+ * palette style as src/cli/help.ts (no chalk, colors off when not a TTY).
+ * Non-interactive mode only — interactive mode renders the same info inside
+ * the persistent ReviewSessionView Ink tree instead.
  */
 
 import { ROLE_LABELS, type RoleOutput } from '../roles/roleContract.js';
@@ -92,7 +85,7 @@ export function printResolverDecision(result: ResolverResult): void {
   console.log(`  ${result.rationale}`);
 }
 
-/** Prints the absolute path to the HTML report so the developer can open it immediately (Phase 7 DoD). */
+/** Prints the absolute path to the HTML report so it's easy to open right away. */
 export function printReportPaths(paths: ReportPaths): void {
   const c = colors();
   console.log(`\n${c.dim}Report:${c.reset} ${c.bold}${paths.html}${c.reset}`);
@@ -100,7 +93,7 @@ export function printReportPaths(paths: ReportPaths): void {
   console.log(`${c.dim}         ${paths.md}${c.reset}`);
 }
 
-/** Prints the absolute path to the Phase 9 fix-summary HTML report, alongside the scan report path (Phase 9's "New" bullet 3). */
+/** Prints the absolute path to the fix-summary HTML report, alongside the scan report path. */
 export function printFixReportPath(path: string): void {
   const c = colors();
   console.log(`${c.dim}Fix report:${c.reset} ${c.bold}${path}${c.reset}`);

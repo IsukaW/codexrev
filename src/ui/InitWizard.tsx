@@ -1,17 +1,5 @@
-/**
- * Codexrev — `init` subcommand interactive wizard.
- *
- * Screens, navigated with Enter / Esc:
- *   1. Provider        (select)
- *   2. Model           (text input, prefilled)
- *   3. API key         (masked text input with "show" toggle)
- *   4. Base URL        (optional, text input)
- *   5. Tool calling    (y/N — prefilled from the provider's known capability)
- *   6. Vision          (y/N)
- *   7. Max input tokens  (optional number)
- *   8. Max output tokens (optional number)
- *   9. Confirm         (review + submit)
- */
+// `init` wizard — walks through provider, model, api key, base url, capabilities,
+// token limits, then a confirm screen. Enter to advance, Esc to bail out.
 
 import React, { useState } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
@@ -56,7 +44,7 @@ const PROVIDER_CHOICES: Array<{ label: string; value: ProviderId }> = Object.val
   PROVIDER_REGISTRY,
 ).map((meta) => ({ label: `${meta.id} — ${meta.label}`, value: meta.id }));
 
-/** Parse a y/N answer, falling back to `fallback` when the field is blank. */
+// parses a y/N reply, blank means keep the fallback
 function parseYesNo(raw: string, fallback: boolean): boolean {
   const v = raw.trim().toLowerCase();
   if (v === '') return fallback;
@@ -71,8 +59,7 @@ export const InitWizard: React.FC<InitWizardProps> = (props) => {
   const [baseUrl, setBaseUrl] = useState<string>(props.initialBaseUrl ?? '');
   const [showKey, setShowKey] = useState(false);
 
-  // Capability answers. `toolCalling` defaults to whatever the provider
-  // registry advertises for that vendor; vision defaults to off.
+  // toolCalling starts at whatever the registry says this provider supports; vision just defaults off
   const [toolCalling, setToolCalling] = useState<boolean>(
     props.initialProvider ? PROVIDER_REGISTRY[props.initialProvider].supportsTools : true,
   );
@@ -94,16 +81,14 @@ export const InitWizard: React.FC<InitWizardProps> = (props) => {
       props.onCancel();
     }
   });
-  // unused-but-imported: keep `exit` reachable for future abort UX
-  void exit;
+  void exit; // keep the import used, might need it for a hard-abort path later
 
   const toolDefault = provider ? PROVIDER_REGISTRY[provider].supportsTools : true;
 
   function submit() {
     if (!provider) return;
     const meta = PROVIDER_REGISTRY[provider];
-    // For local providers (Ollama, LM Studio, LiteLLM) substitute a
-    // sentinel so the encrypted config still has *something* to seal.
+    // local providers don't need a real key, fall back to the provider id so we still have something to encrypt
     const resolvedKey =
       apiKey.trim() || (meta.requiresApiKey ? '' : meta.id);
     props.onSubmit({

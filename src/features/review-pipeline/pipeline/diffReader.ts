@@ -1,17 +1,9 @@
-/**
- * Codexrev — Feature 2 (review-pipeline) git diff ingestion.
- *
- * Resolves `--diff <ref>` (default: staged changes) via `git diff`,
- * reusing the same `simple-git` dependency already used by
- * `services/checkpoint.ts` — no new git-shelling code. Parses the raw
- * unified diff into per-file hunks with per-line old/new line numbers,
- * reusing the already-installed `diff` package's `parsePatch()` for the
- * unified-diff grammar instead of hand-rolling one.
- *
- * The per-line line numbers are what Phase 7's git change-coverage map
- * keys off of (each changed line → the role verdict that covers it), so
- * they need to be right, not just "close enough for a prompt".
- */
+// Reads --diff <ref> (default: staged) via git diff, using the simple-git dep
+// that's already in the project. Parses the raw unified diff with the `diff`
+// package's parsePatch() rather than hand-rolling a parser.
+//
+// Line numbers here need to be exactly right, not approximate — the change-coverage
+// map keys off them (changed line -> role verdict).
 
 import nodePath from 'node:path';
 import { simpleGit } from 'simple-git';
@@ -27,15 +19,11 @@ export class DiffReaderError extends CodexrevError {
 
 export type DiffLineType = 'add' | 'del' | 'context';
 
-/** One line inside a hunk, with the line number(s) it corresponds to on each side. */
 export interface DiffLine {
   readonly type: DiffLineType;
-  /** Line content, with the leading +/-/space marker stripped. */
-  readonly content: string;
-  /** Set for 'del' and 'context' lines — the line's number in the old file. */
-  readonly oldLineNumber?: number;
-  /** Set for 'add' and 'context' lines — the line's number in the new file. */
-  readonly newLineNumber?: number;
+  readonly content: string; // leading +/-/space marker stripped
+  readonly oldLineNumber?: number; // set for del/context
+  readonly newLineNumber?: number; // set for add/context
 }
 
 export interface DiffHunk {
@@ -49,23 +37,19 @@ export interface DiffHunk {
 export type FileChangeStatus = 'added' | 'modified' | 'deleted' | 'renamed';
 
 export interface DiffFile {
-  /** Current path — the new path, or the old path for a deleted file. */
-  readonly path: string;
-  /** Only set when the file was renamed (old path differs from `path`). */
-  readonly oldPath?: string;
+  readonly path: string; // new path, or old path if deleted
+  readonly oldPath?: string; // only set on rename
   readonly status: FileChangeStatus;
   readonly hunks: readonly DiffHunk[];
 }
 
 export interface ParsedDiff {
-  /** 'staged' for the default (`git diff --cached`), or the ref that was diffed against. */
-  readonly ref: string;
+  readonly ref: string; // 'staged' for the default, or whatever ref was diffed
   readonly files: readonly DiffFile[];
-  /** Full raw unified diff text — handed to roles as prompt context alongside the structured form. */
-  readonly raw: string;
+  readonly raw: string; // full raw unified diff, given to roles alongside the structured form
 }
 
-/** Strips git's `a/`/`b/` prefix and normalizes `/dev/null` to undefined. */
+// strips git's a/ b/ prefix, /dev/null becomes undefined
 function stripGitPrefix(p: string): string | undefined {
   if (p === '/dev/null') return undefined;
   return p.replace(/^[ab]\//, '');
@@ -132,21 +116,12 @@ function normalizeFile(patch: {
   };
 }
 
-/**
- * `git diff` always reports file paths relative to the repo ROOT, never
- * relative to the caller's cwd — a fact that's invisible when `cwd` IS
- * the repo root, but breaks every downstream consumer that joins
- * `finding.file` onto `cwd` (the Build role, `deterministicFixer.ts`,
- * `editGenerator.ts`, the `edit` tool, a role's own `read_file`/`grep`
- * tool calls) the moment `codexrev review scan` is run from a
- * subdirectory of a larger repo (e.g. this repo's own `testProject/`
- * sample dir) — paths like `testProject/src/fib.js` get joined onto a
- * cwd that's ALREADY `.../testProject`, doubling the segment into a
- * path that doesn't exist. Rewriting every path to be cwd-relative here,
- * once, at the source, means every downstream consumer's existing
- * "just join this onto cwd" logic is simply correct, with no changes
- * needed anywhere else.
- */
+// git diff paths are always relative to repo root, not cwd. Fine when cwd IS
+// the root, but breaks every consumer that joins finding.file onto cwd (Build
+// role, deterministicFixer, editGenerator, the edit tool, roles' own grep/read_file
+// calls) once you run scan from a subdirectory — path segments double up and
+// point nowhere. Rewriting to cwd-relative once here means nothing downstream
+// needs to know or care.
 function rewriteFileToCwdRelative(file: DiffFile, repoRoot: string, cwd: string): DiffFile {
   const newPath = nodePath.relative(cwd, nodePath.join(repoRoot, file.path));
   if (file.status !== 'renamed' || !file.oldPath) {
@@ -156,14 +131,7 @@ function rewriteFileToCwdRelative(file: DiffFile, repoRoot: string, cwd: string)
   return { ...file, path: newPath, oldPath: newOldPath };
 }
 
-/**
- * Reads and parses the diff for `codexrev review scan`.
- *
- * @param cwd - Repo root to run `git diff` in.
- * @param ref - Git ref to diff against (e.g. `HEAD~1`, a branch, a commit
- *   SHA). Omit to diff staged changes (`git diff --cached`) — the default
- *   per Phase 1's `--diff` flag description.
- */
+// ref omitted -> diffs staged changes (git diff --cached), which is the default
 export async function readDiff(cwd: string, ref?: string): Promise<ParsedDiff> {
   const git = simpleGit({ baseDir: cwd });
 

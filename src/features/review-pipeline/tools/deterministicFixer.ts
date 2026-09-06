@@ -1,31 +1,15 @@
 /**
- * Codexrev — Feature 2 (review-pipeline) deterministic fixer.
+ * Regex patches for known TS compiler error codes, tried before the LLM
+ * editGenerator in the Breaker-Builder loop. Only Build-role findings carry
+ * a TS\d+ code, so this never fires for anything else.
  *
- * Regex-based patches for known TypeScript compiler error codes, tried
- * BEFORE the LLM-based `editGenerator.ts` in the Breaker-Builder loop
- * (Phase 8). Only the Build role's findings carry a `TS\d+` code in
- * their description (`build.ts`'s `${toolLabel} ${code}: ${message}`
- * format), so this only ever fires for Build findings — everything
- * else falls straight through to the LLM path, which is correct: these
- * three codes are narrow, well-understood, mechanical fixes; nothing
- * else in the six-role contract is safe to pattern-match this way.
+ * Handled so far: TS7006 (implicit any param, add ": any"), TS2307 (missing
+ * relative import extension, append ".js" per our NodeNext/ESM setup), and
+ * TS2339 only when the compiler gives a "Did you mean 'X'?" hint — without
+ * that hint it's not safe to guess.
  *
- * Seed codes (Section 2, "TS7006/TS2307/TS2339 to start" — extend the
- * list as needed, logging any new code added to the Decision Log):
- *   TS7006 — implicit 'any' parameter → add an explicit ': any'.
- *   TS2307 — cannot find module (relative, no extension) → append
- *            '.js', matching this repo's own NodeNext/ESM convention
- *            (and most modern TS project configs) requiring explicit
- *            extensions on relative imports.
- *   TS2339 — property does not exist, WITH a compiler-supplied
- *            "Did you mean 'X'?" suggestion → apply that exact
- *            suggestion. Without a "Did you mean" hint, TS2339 is not
- *            safe to guess at, so no fix is returned.
- *
- * Each handler returns an `{oldString, newString}` pair scoped to a
- * single source line (not a full rewritten file) — the caller applies
- * it via the shared `edit` tool (`src/tools/builtin.ts`), never
- * writing files directly, per Phase 8's reuse instruction.
+ * Each handler returns an {oldString, newString} pair for one line, applied
+ * via the shared edit tool rather than writing the file directly.
  */
 
 import { promises as fs } from 'node:fs';
@@ -49,8 +33,7 @@ function fixImplicitAny(finding: Finding, line: string): DeterministicFixResult 
   const m = finding.description.match(/Parameter '([^']+)' implicitly has an 'any' type/);
   if (!m) return null;
   const paramName = m[1];
-  // Negative lookahead avoids re-matching a parameter that's already typed
-  // (e.g. a previous fix attempt, or a same-named param elsewhere on the line).
+  // negative lookahead so we don't re-match a param that's already typed
   const re = new RegExp(`\\b${escapeRegExp(paramName)}\\b(?!\\s*:)`);
   if (!re.test(line)) return null;
   return {
@@ -106,12 +89,8 @@ export function extractTsCode(finding: Finding): string | null {
   return m ? m[1] : null;
 }
 
-/**
- * Attempts a deterministic fix for `finding`. Returns `null` when the
- * finding isn't a recognized TS code, the finding's line can't be read,
- * or the handler can't confidently produce a fix — the caller should
- * fall through to `editGenerator.ts` in every `null` case.
- */
+// returns null if the code isn't recognized, the line can't be read, or the
+// handler isn't confident — caller falls through to editGenerator.ts either way
 export async function tryDeterministicFix(finding: Finding, cwd: string): Promise<DeterministicFixResult | null> {
   const code = extractTsCode(finding);
   if (!code) return null;

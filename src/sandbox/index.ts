@@ -1,12 +1,5 @@
-/**
- * Codexrev — sandbox module entry point.
- *
- * Public surface:
- *   - `SandboxManager`  (alias for the resolve+exec convenience)
- *   - `resolveSandbox()` factory
- *   - All four backend classes
- *   - Types
- */
+// Sandbox module entry point — exports SandboxManager, resolveSandbox(), the four
+// backend classes, and their types.
 
 import {
   SandboxError,
@@ -36,14 +29,10 @@ export {
   type ResolvedSandbox,
 };
 
-/** Which sandbox backends can actually run on this machine. */
 export type SandboxProbe = Record<'seatbelt' | 'docker' | 'podman', boolean>;
 
-/**
- * Convenience façade shared by the shell tool and the TUI Control Panel.
- * A single instance is created per session so a live sandbox-mode change
- * from the panel takes effect on the next command without a restart.
- */
+// shared by the shell tool and the TUI control panel — one instance per session so a
+// sandbox-mode change from the panel applies to the next command without a restart
 export class SandboxManager {
   private mode: SandboxMode;
   private resolvedPromise?: Promise<ResolvedSandbox>;
@@ -55,7 +44,7 @@ export class SandboxManager {
   setMode(mode: SandboxMode): void {
     if (mode === this.mode) return;
     this.mode = mode;
-    this.resolvedPromise = undefined; // re-resolve on next use
+    this.resolvedPromise = undefined; // force a re-resolve next time
   }
 
   getMode(): SandboxMode {
@@ -69,12 +58,11 @@ export class SandboxManager {
     return this.resolvedPromise;
   }
 
-  /** Effective backend after probing — e.g. `auto` resolves to `seatbelt`. */
+  // what 'auto' actually resolved to, e.g. seatbelt
   async effectiveMode(): Promise<SandboxMode> {
     return (await this.resolve()).effectiveMode;
   }
 
-  /** Probe which sandbox backends are usable on this machine. */
   async probe(): Promise<SandboxProbe> {
     const [seatbelt, docker, podman] = await Promise.all([
       new SeatbeltSandbox().available(),

@@ -39,7 +39,7 @@ export async function runModelsWizard(cwd: string): Promise<void> {
   // Run the interactive wizard.
   const result = await runInteractiveModelsWizard(existingProviders);
 
-  // ── Save provider (if new) ──
+  // save the provider if it's new
   if (result.newProvider) {
     const { name, vendor, baseUrl, apiKey } = result.newProvider;
     try {
@@ -60,7 +60,7 @@ export async function runModelsWizard(cwd: string): Promise<void> {
     }
   }
 
-  // ── Save model ──
+  // save the model
   const providerName = result.newProvider
     ? result.newProvider.name
     : result.existingProvider!;
@@ -118,8 +118,6 @@ export async function runModelsWizard(cwd: string): Promise<void> {
     throw err;
   }
 }
-
-// ── Ink bridge ──────────────────────────────────────────────────────
 
 async function runInteractiveModelsWizard(
   existingProviders: ProviderConfigEntry[],

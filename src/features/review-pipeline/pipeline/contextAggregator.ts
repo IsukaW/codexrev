@@ -1,19 +1,10 @@
-/**
- * Codexrev — Feature 2 (review-pipeline) context accumulator.
- *
- * The literal implementation of "context accumulation" from the
- * methodology: starts with `{ diff, urs? }`, and after each role
- * finishes, the orchestrator (Phase 5) appends that role's full
- * `RoleOutput` here so every subsequent role's prompt can be built with
- * everything found so far. The Resolver Engine (Phase 6) and the report
- * renderer (Phase 7) both read the final snapshot via `toJSON()`.
- *
- * Deliberately does not enforce `ROLE_ORDER` (BA → Dev → Build → Sec →
- * QA → PM) — driving that sequence is the orchestrator's job, not the
- * accumulator's. This class only guarantees two things: no role's
- * output can be silently overwritten, and the accumulated snapshot
- * preserves the order roles actually completed in.
- */
+// Accumulates role outputs as the pipeline runs. Starts with { diff, urs? },
+// and the orchestrator appends each role's RoleOutput here as it finishes so
+// later roles' prompts can see what earlier ones found. Resolver and the
+// report renderer both read the final snapshot via toJSON().
+//
+// Doesn't enforce ROLE_ORDER itself — that's the orchestrator's job. Just
+// guarantees a role's output isn't silently overwritten, and keeps completion order.
 
 import type { ParsedDiff } from './diffReader.js';
 import type { RoleId, RoleOutput } from '../roles/roleContract.js';
@@ -26,31 +17,24 @@ export class ContextAggregatorError extends CodexrevError {
   }
 }
 
-/** JSON-serializable snapshot of everything accumulated so far. */
 export interface AggregatedContext {
   readonly diff: ParsedDiff;
   readonly urs?: string;
-  /** One key per completed role, inserted in the order each role finished. */
-  readonly roleOutputs: Readonly<Partial<Record<RoleId, RoleOutput>>>;
+  readonly roleOutputs: Readonly<Partial<Record<RoleId, RoleOutput>>>; // keyed by role, insertion order = finish order
 }
 
 export class ContextAggregator {
   private readonly diff: ParsedDiff;
   private readonly urs?: string;
-  /** A `Map` preserves insertion order — that's what makes `toJSON()`'s key order meaningful. */
-  private readonly roleOutputs = new Map<RoleId, RoleOutput>();
+  private readonly roleOutputs = new Map<RoleId, RoleOutput>(); // Map keeps insertion order, toJSON relies on that
 
   constructor(diff: ParsedDiff, urs?: string) {
     this.diff = diff;
     this.urs = urs;
   }
 
-  /**
-   * Append one role's completed output. Throws if that role has already
-   * recorded a result — a role contract violation, not a normal-flow
-   * case (re-runs after a fix, e.g. Phase 8, go through
-   * `replaceRoleOutput` instead, which is explicit about overwriting).
-   */
+  // throws if the role already has a result — re-runs should go through
+  // replaceRoleOutput instead, which is explicit about overwriting
   addRoleOutput(output: RoleOutput): void {
     if (this.roleOutputs.has(output.role)) {
       throw new ContextAggregatorError(
@@ -60,11 +44,8 @@ export class ContextAggregator {
     this.roleOutputs.set(output.role, output);
   }
 
-  /**
-   * Explicitly overwrite a role's output, keeping its original position
-   * in iteration order. Used by Phase 8's Breaker-Builder loop, which
-   * re-runs only the roles that failed rather than the full six.
-   */
+  // overwrites in place, keeps original position. used by the breaker-builder
+  // loop when it re-runs only the roles that were blocking
   replaceRoleOutput(output: RoleOutput): void {
     this.roleOutputs.set(output.role, output);
   }
@@ -77,12 +58,10 @@ export class ContextAggregator {
     return this.roleOutputs.has(role);
   }
 
-  /** Roles completed so far, in the order they finished. */
   get completedRoles(): readonly RoleId[] {
     return [...this.roleOutputs.keys()];
   }
 
-  /** Snapshot for the next role's prompt, the Resolver, or the report renderer. */
   toJSON(): AggregatedContext {
     return {
       diff: this.diff,

@@ -1,69 +1,37 @@
-/**
- * Codexrev — Feature 2 (review-pipeline) Breaker-Builder loop.
- *
- * Runs after the six-role scan when `--fix` is set and the Resolver's
- * decision is Block or Request Changes (wired in `runReviewSession.ts`).
- * Each iteration:
- *   1. Collects "blocking findings" — findings belonging to a role
- *      whose OWN verdict is `'block'` (not `'flag'` — an advisory
- *      finding shouldn't trigger an automatic edit).
- *   2. For each, tries `deterministicFixer.ts` first, falls back to
- *      `editGenerator.ts` (LLM) — per Section 2's exact order.
- *   3. Applies accepted fixes via the shared `edit` tool
- *      (`src/tools/builtin.ts`) — never writes files directly, and never
- *      `git add`s them either (see below).
- *
- *      Deterministic fixes (narrow, compiler-verified, mechanical) apply
- *      immediately, ungated, same as before. LLM-generated edits are
- *      gated — but as ONE batched decision per iteration, not one gate
- *      per finding: every LLM fix for the iteration is generated first
- *      (streamed to the UI via `onFixCandidate` as each is computed, so
- *      the user watches them arrive), then shown together and confirmed
- *      with a single Apply-all/Skip-all/Abort choice. Gating each edit
- *      individually — the original Phase 8 design — turned an iteration
- *      with several findings into that many interruptions for what's
- *      really one decision ("do these look right"), and the awkward
- *      role-oriented wording those per-fix gates borrowed made it worse
- *      (see the Decision Log). Batching does not weaken the gate itself:
- *      declining still leaves every one of those findings unresolved,
- *      same as declining used to.
- *   4. Re-reads the diff so the roles re-run against what actually
- *      changed. Deliberately diffs the WORKING TREE against HEAD
- *      (`git diff HEAD`), not the index against HEAD (`git diff
- *      --cached`, the default scan mode) — the `edit` tool only touches
- *      the working tree, and re-staging the AI's own edits into the same
- *      index as whatever the user staged would make the two
- *      indistinguishable. `git diff HEAD` shows the combined picture
- *      (user's original change + the AI's fix) to the roles that need
- *      it, while the AI's edits stay visibly *unstaged* — `git status`
- *      still tells the user exactly what the AI changed versus what they
- *      staged themselves. When the original scan used an explicit
- *      `--diff <ref>` rather than the staged default, that same `ref` is
- *      reused here instead — it's already a working-tree comparison, so
- *      it already picks up the AI's edits with no special-casing needed.
- *      In a repo with no commits yet (`HEAD` doesn't resolve to anything
- *      — e.g. everything was `git add`ed but never committed), `git diff
- *      HEAD` fails outright, unlike `--cached`, which git special-cases
- *      to work against an empty tree; `resolveWorkingTreeDiffRef()` below
- *      detects that and substitutes git's well-known empty-tree hash so
- *      the fix loop still works on a brand-new repo.
- *   5. Re-runs ONLY the roles that were blocking (not the full six).
- *
- * "Phantom-finding filtering" (Section 2: a finding that no longer
- * reproduces after a fix shouldn't be re-flagged) falls out naturally
- * from step 5 — a re-run role produces a fresh, independent verdict
- * from the current code, not a diff against its own prior findings, so
- * a fixed issue simply doesn't reappear. No separate identity-tracking
- * logic is needed, which also avoids the much harder problem of
- * matching "the same" finding across two independently-generated LLM
- * outputs.
- *
- * Hard limits (Golden Rule — never exceed): `maxIterations` (passed in,
- * already capped at `MAX_FIX_ITERATIONS_CEILING` by
- * `validateReviewPipelineSettings()` in Phase 3) and
- * `MAX_RETRIES_PER_FILE` (3, per Section 2 — not user-configurable,
- * same as the guide frames both numbers as fixed invariants).
- */
+// Breaker-Builder loop. Runs after the six-role scan when --fix is set and the
+// resolver came back Block or Request Changes.
+//
+// Per iteration: grab findings from roles that actually verdicted 'block' (not
+// 'flag' — advisory stuff shouldn't trigger an auto-edit), try the deterministic
+// fixer first and fall back to the LLM editGenerator, then apply through the
+// shared `edit` tool (never write files directly, never git add).
+//
+// Deterministic fixes are narrow/compiler-verified so they just apply, no gate.
+// LLM edits get gated, but as one batched Apply-all/Skip-all/Abort per iteration
+// instead of per finding — used to gate each edit individually and that turned
+// a 5-finding iteration into 5 interruptions for what's really one call ("do
+// these look right"). Declining the batch still leaves every finding in it
+// unresolved, same as before.
+//
+// Re-diffing mid-loop: we diff the working tree against HEAD, not the index
+// against HEAD like the initial scan does. The edit tool only touches the
+// working tree, and if we staged the AI's own edits into the same index the
+// user staged, `git status` couldn't tell the two apart anymore. Diffing HEAD
+// shows roles the combined picture (user's change + AI's fix) while keeping
+// the AI's edits visibly unstaged. If the scan used an explicit --diff ref,
+// we just reuse that ref instead. On a repo with no commits yet, HEAD doesn't
+// resolve at all (unlike --cached, which git special-cases against an empty
+// tree), so resolveWorkingTreeDiffRef() below falls back to git's well-known
+// empty-tree hash.
+//
+// Only the roles that were blocking get re-run, not all six. That's also
+// what makes phantom-finding filtering free: a re-run role judges the current
+// code fresh, it's not diffing against its own old findings, so a fix that
+// actually worked just doesn't get re-flagged. No id-matching needed across
+// two independently generated LLM outputs, which would've been a mess anyway.
+//
+// Hard limits, not configurable: maxIterations (already capped upstream by
+// validateReviewPipelineSettings) and MAX_RETRIES_PER_FILE (3).
 
 import { simpleGit } from 'simple-git';
 import { ROLE_LABELS, ROLE_ORDER, type Finding, type RoleId, type RoleOutput } from '../roles/roleContract.js';
@@ -77,7 +45,7 @@ import type { ILLMProvider } from './illmProvider.js';
 import type { RoleRunContext } from './roleRunContext.js';
 import type { InteractionChannel } from '../../../core/interaction.js';
 
-/** Per-file retry cap — a hard limit, not configurable (Section 2 / Golden Rule). */
+// per-file retry cap, hard limit, not configurable
 export const MAX_RETRIES_PER_FILE = 3;
 
 export type FixerStage = 'deterministic' | 'llm';
@@ -99,52 +67,29 @@ export interface BreakerBuilderResult {
   readonly outcome: BreakerBuilderOutcome;
   readonly iterations: number;
   readonly fixAttempts: readonly FixAttemptRecord[];
-  /** Findings still attached to a blocking role's verdict when the loop stopped. */
-  readonly unresolvedFindings: readonly Finding[];
+  readonly unresolvedFindings: readonly Finding[]; // still attached to a blocking verdict when the loop stopped
 }
 
 export interface RunBreakerBuilderLoopOptions {
-  /** Same aggregator the initial scan used — re-run roles replace their entry in place (Phase 4's `replaceRoleOutput`). */
-  readonly aggregator: ContextAggregator;
+  readonly aggregator: ContextAggregator; // same one the initial scan used; re-run roles replace their entry in place
   readonly llm: ILLMProvider;
   readonly model: string;
   readonly cwd: string;
   readonly diffRef?: string;
   readonly urs?: string;
-  /** Already clamped to `MAX_FIX_ITERATIONS_CEILING` by the caller (settings validation, Phase 3). */
-  readonly maxIterations: number;
-  /**
-   * When provided, pauses for a single Apply-all/Details/Skip-all/Abort
-   * gate before applying an iteration's LLM-generated edits as a batch
-   * (not deterministic ones — those are narrow, compiler-verified,
-   * mechanical fixes; see the Decision Log for why only LLM edits are
-   * gated, and for why the gate covers the whole batch rather than one
-   * edit at a time). Omit for non-interactive mode.
-   */
+  readonly maxIterations: number; // already clamped by settings validation upstream
+  // when set, pauses for one Apply-all/Details/Skip-all/Abort gate per iteration's
+  // batch of LLM edits (deterministic fixes never gate). omit for non-interactive mode.
   readonly interaction?: InteractionChannel;
   readonly onIterationStart?: (iteration: number, blockingFindingsCount: number) => void;
-  /**
-   * Called the moment a fixer (deterministic or LLM) produces a
-   * candidate fix, BEFORE it's queued/applied — lets the UI stream each
-   * one in as it's generated, ahead of the batch gate. Same pattern as
-   * `orchestrator.ts`'s `onRoleComplete`-before-gate.
-   */
+  // fires the moment a fixer produces a candidate, before it's queued/applied,
+  // so the UI can stream them in ahead of the batch gate
   readonly onFixCandidate?: (candidate: FixCandidate) => void;
-  /**
-   * Called once per iteration, right before the batch gate, with every
-   * LLM-generated candidate awaiting that one Apply-all decision — this
-   * is the full list the CLI renders together in the "Details" panel,
-   * without re-deriving it from the `onFixCandidate` stream.
-   */
+  // fires once per iteration right before the gate, with the full candidate list —
+  // this is what the "Details" panel renders, no need to rebuild it from onFixCandidate
   readonly onFixBatchReady?: (candidates: readonly FixCandidate[], iteration: number) => void;
-  /**
-   * Called right after a fix is applied. Awaited (`void | Promise<void>`,
-   * same contract as `orchestrator.ts`'s `onRoleComplete`) because the
-   * caller uses this to append the fix's audit entry (Phase 9) —
-   * awaiting keeps those appends strictly sequential, matching
-   * `appendAuditEntry`'s own single-writer assumption (unawaited
-   * concurrent appends could race on its read-modify-write cycle).
-   */
+  // awaited because the caller appends an audit entry here and appendAuditEntry
+  // assumes a single writer — firing these concurrently could race its read-modify-write
   readonly onFixAttempt?: (record: FixAttemptRecord) => void | Promise<void>;
   readonly onRoleRerun?: (output: RoleOutput) => void;
 }
@@ -163,17 +108,12 @@ interface BlockingFinding {
   readonly finding: Finding;
 }
 
-/** Git's well-known empty-tree object hash — valid in any repo, no commits required. */
+// git's well-known empty-tree hash, works in any repo even with zero commits
 const EMPTY_TREE_SHA = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 
-/**
- * The ref to diff the working tree against when refreshing the diff
- * mid-loop. Reuses `diffRef` as-is when the scan was already ref-based.
- * Otherwise this needs a stand-in for the (undefined) 'staged' default
- * that still means "working tree vs HEAD" — but `HEAD` itself doesn't
- * resolve in a repo with no commits yet, so this checks for that and
- * substitutes the empty-tree hash instead.
- */
+// Ref to diff the working tree against on refresh. Reuses diffRef when the scan
+// was already ref-based; otherwise falls back to HEAD, except HEAD doesn't
+// resolve on a brand-new repo with no commits, so we substitute the empty tree.
 async function resolveWorkingTreeDiffRef(cwd: string, diffRef: string | undefined): Promise<string> {
   if (diffRef) return diffRef;
   const git = simpleGit({ baseDir: cwd });
@@ -200,28 +140,17 @@ function collectBlockingFindings(aggregator: ContextAggregator, blockingRoles: r
   return out;
 }
 
-/** Same file, overlapping line range — i.e. two findings citing the same underlying code. */
+// same file + overlapping line range = two findings pointing at the same code
 function locationsOverlap(a: Finding, b: Finding): boolean {
   return a.file === b.file && a.lineStart <= b.lineEnd && b.lineStart <= a.lineEnd;
 }
 
-/**
- * Collapses blocking findings down to one representative per unique
- * (file, overlapping-line-range) location, first-seen order (`blocking`
- * is already in `ROLE_ORDER`, so BA's wording wins over Dev's, Dev's
- * over QA's, etc. — an arbitrary but deterministic tie-break).
- *
- * Multiple roles independently flagging the exact same bug — the
- * reported case: BA, Dev, QA, and PM all separately citing the same
- * swapped Fibonacci initializers — otherwise each triggered their own,
- * separately LLM-generated fix attempt for the identical lines: wasted
- * model calls (and real wall-clock time), and a batch gate cluttered
- * with 4-5 near-duplicate proposals for what's really one edit. Once
- * the one representative's fix is applied, every other role's matching
- * finding disappears on its own at the next re-run (the underlying code
- * is simply gone), so this needs no separate "already covered" tracking
- * beyond the location check itself.
- */
+// Collapses blocking findings to one per overlapping location, first-seen order
+// (blocking is already in ROLE_ORDER so BA beats Dev beats QA etc — arbitrary
+// but deterministic). Without this, BA/Dev/QA/PM all flagging the same swapped
+// Fibonacci initializers meant 4 separate LLM fix attempts for identical lines.
+// Once the representative's fix lands, the other findings just vanish on the
+// next re-run since the code they pointed at is gone — no dedup bookkeeping needed.
 function dedupeByLocation(findings: readonly BlockingFinding[]): BlockingFinding[] {
   const out: BlockingFinding[] = [];
   for (const candidate of findings) {
@@ -238,21 +167,15 @@ async function applyFix(fix: { file: string; oldString: string; newString: strin
     const result = await editTool.execute({ file_path: fix.file, old_string: fix.oldString, new_string: fix.newString }, { cwd });
     return !result.isError;
   } catch {
-    // The `edit` tool throws (ToolError) when old_string isn't found — a
-    // race between reading the file and applying the fix, or a fix
-    // computed against now-stale content. Treat as "couldn't apply".
+    // edit tool throws when old_string isn't found — stale content or a race
+    // between reading the file and applying the fix. just count it as failed.
     return false;
   }
 }
 
-/**
- * Loops the batch fix-confirm gate for one iteration's whole set of
- * LLM-generated edits until a non-'details' decision comes back. Stage
- * is namespaced `fix-batch:<iteration>` — distinct from the old
- * per-finding `fix:<findingId>` namespace — so the CLI can tell a batch
- * gate apart from a role gate (and, before this redesign, from a
- * per-finding fix gate) purely from `request.stage`.
- */
+// loops the batch gate until something other than 'details' comes back.
+// stage is namespaced fix-batch:<iteration> so the CLI can tell it apart
+// from a role gate purely from request.stage
 async function gateForFixBatch(
   channel: InteractionChannel,
   iteration: number,
@@ -268,9 +191,7 @@ async function gateForFixBatch(
   for (;;) {
     const decision = await channel.requestStageGate(stage, stageLabel, 'llm', summary);
     if (decision !== 'details') return decision;
-    // 'details' loops back — the CLI-side subscriber has already shown
-    // the full old/new string diff for every candidate before
-    // responding, same pattern as the role gate in orchestrator.ts.
+    // 'details' loops back — CLI already showed the full diff for each candidate
   }
 }
 
@@ -286,21 +207,16 @@ export async function runBreakerBuilderLoop(opts: RunBreakerBuilderLoopOptions):
       return { outcome: 'resolved', iterations: iteration - 1, fixAttempts, unresolvedFindings: [] };
     }
 
-    // One fix attempt per unique code LOCATION, not per finding — see
-    // `dedupeByLocation`'s docstring. `blocking` (the full, un-deduped
-    // list) is still what's reported on escalate/abort below, since
-    // every one of those findings genuinely needs to clear on a re-run,
-    // dedup or not.
+    // one fix per unique location, not per finding (see dedupeByLocation) —
+    // but `blocking` itself, un-deduped, is still what we report on escalate/abort
     const toFix = dedupeByLocation(blocking);
     opts.onIterationStart?.(iteration, toFix.length);
 
     let appliedAny = false;
     const pendingLlmFixes: FixCandidate[] = [];
 
-    // Phase 1 — generate every candidate fix for this iteration.
-    // Deterministic fixes apply immediately (ungated, as always). LLM
-    // fixes are queued instead of applied here — they're all gated
-    // together, once, after this loop (see this file's docstring).
+    // generate every candidate for this iteration first. deterministic fixes
+    // apply right away; LLM fixes get queued for the batch gate below.
     for (const { role, finding } of toFix) {
       const retries = fileRetryCounts.get(finding.file) ?? 0;
       if (retries >= MAX_RETRIES_PER_FILE) continue;
@@ -347,7 +263,7 @@ export async function runBreakerBuilderLoop(opts: RunBreakerBuilderLoopOptions):
       await opts.onFixAttempt?.(record);
     }
 
-    // Phase 2 — one batch decision covering every queued LLM fix.
+    // one batch decision for every queued LLM fix
     if (pendingLlmFixes.length > 0) {
       let decision: 'continue' | 'skip' | 'abort' = 'continue';
       if (opts.interaction) {
@@ -386,24 +302,16 @@ export async function runBreakerBuilderLoop(opts: RunBreakerBuilderLoopOptions):
           opts.onFixAttempt?.(record);
         }
       }
-      // decision === 'skip' — none of the queued LLM fixes are applied;
-      // every finding they would have addressed stays unresolved, same
-      // as declining a single fix used to.
+      // 'skip' — nothing queued gets applied, stays unresolved
     }
 
     if (!appliedAny) {
-      // Nothing could be fixed this round (every finding either hit its
-      // file's retry cap, or both fixers declined) — looping further
-      // would just repeat the same outcome. Escalate now instead of
-      // burning the remaining iteration budget.
+      // everything either hit its retry cap or both fixers declined — looping
+      // more would just repeat the same result, so escalate now
       return { outcome: 'escalated', iterations: iteration, fixAttempts, unresolvedFindings: blocking.map((b) => b.finding) };
     }
 
-    // Diff the working tree against HEAD (or the empty tree, on a repo
-    // with no commits yet), not the index against HEAD — see this file's
-    // docstring and `resolveWorkingTreeDiffRef()` for why. Either way,
-    // the AI's edits are visible to the re-run roles WITHOUT ever
-    // touching the git index.
+    // working tree vs HEAD (or empty tree), never the index — see top of file
     const refreshedDiff = await readDiff(opts.cwd, await resolveWorkingTreeDiffRef(opts.cwd, opts.diffRef));
 
     for (const role of blockingRoles) {
@@ -421,8 +329,7 @@ export async function runBreakerBuilderLoop(opts: RunBreakerBuilderLoopOptions):
     }
   }
 
-  // Iteration budget exhausted — check once more whether it actually converged
-  // on the very last re-run before declaring escalation.
+  // ran out of iterations — check once more if the last re-run actually cleared it
   const stillBlocking = collectBlockingFindings(opts.aggregator, collectBlockingRoles(opts.aggregator));
   if (stillBlocking.length === 0) {
     return { outcome: 'resolved', iterations: opts.maxIterations, fixAttempts, unresolvedFindings: [] };
@@ -435,7 +342,7 @@ export async function runBreakerBuilderLoop(opts: RunBreakerBuilderLoopOptions):
   };
 }
 
-/** For UI/report code that wants a role's plain-English label alongside a fix attempt. */
+// plain-English role label for a fix attempt, for UI/report code
 export function fixAttemptRoleLabel(record: FixAttemptRecord): string {
   return ROLE_LABELS[record.role];
 }

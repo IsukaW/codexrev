@@ -1,14 +1,6 @@
-/**
- * Codexrev — verification module.
- *
- * After the Breaker-Builder applies changes, the Resolver runs
- * verification to determine if the fix succeeded (green) or failed
- * (red). Three strategies:
- *
- *   - tests:  Run the project's test suite via shell, check exit code.
- *   - llm:    Ask the LLM to evaluate the current state.
- *   - auto:   Try tests first; fall back to LLM if no test runner detected.
- */
+// After Breaker-Builder applies changes, Resolver verifies green/red. Three
+// strategies: tests (run the suite, check exit code), llm (ask it to judge), auto
+// (tests first, fall back to llm if nothing detected).
 
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -28,9 +20,8 @@ export interface VerificationResult {
 }
 
 export interface VerificationOptions {
-  /** The original user prompt for context. */
   originalPrompt: string;
-  /** Summary of changes made by the Breaker-Builder. */
+  /** what the Breaker-Builder changed */
   changesSummary: string;
   provider: ContentGenerator;
   tools: Map<string, Tool>;
@@ -41,10 +32,7 @@ export interface VerificationOptions {
   signal?: AbortSignal;
 }
 
-/**
- * Detect the project's test runner by looking for config files.
- * Returns the test command or null if none detected.
- */
+// looks for config files to guess the test command, null if nothing matches
 async function detectTestRunner(cwd: string): Promise<string | null> {
   const checks: Array<{ file: string; cmd: string }> = [
     { file: 'package.json', cmd: '' }, // needs special parsing
@@ -66,7 +54,6 @@ async function detectTestRunner(cwd: string): Promise<string | null> {
         if (pkg.scripts?.test) {
           return 'npm test';
         }
-        // Check for common test runners
         if (pkg.devDependencies?.vitest || pkg.dependencies?.vitest) return 'npx vitest run';
         if (pkg.devDependencies?.jest || pkg.dependencies?.jest) return 'npx jest';
       } else if (file === 'Makefile') {
@@ -82,7 +69,6 @@ async function detectTestRunner(cwd: string): Promise<string | null> {
   return null;
 }
 
-/** Run the project's test suite and check the exit code. */
 async function runTestSuite(
   testCmd: string,
   cwd: string,
@@ -114,7 +100,6 @@ async function runTestSuite(
   }
 }
 
-/** Ask the LLM to evaluate whether the changes were successful. */
 async function runLlmEvaluation(
   originalPrompt: string,
   changesSummary: string,
@@ -168,9 +153,6 @@ async function runLlmEvaluation(
   return { passed, details: responseText, strategy: 'llm' };
 }
 
-/**
- * Run verification using the configured strategy.
- */
 export async function runVerification(opts: VerificationOptions): Promise<VerificationResult> {
   const cwd = opts.cwd ?? process.cwd();
   const { mode } = opts;
@@ -201,12 +183,12 @@ export async function runVerification(opts: VerificationOptions): Promise<Verifi
     );
   }
 
-  // mode === 'auto': try tests first, fall back to LLM
+  // auto: try tests first, fall back to LLM
   const testCmd = await detectTestRunner(cwd);
   if (testCmd) {
     logger.info('verification (auto): running test suite', { cmd: testCmd });
     const result = await runTestSuite(testCmd, cwd, opts.tools, opts.signal);
-    // If tests ran but failed, still report — don't fall back to LLM for a "maybe"
+    // report as-is even on failure, don't fall back to LLM for a "maybe"
     return result;
   }
 

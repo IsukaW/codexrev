@@ -1,12 +1,7 @@
 /**
- * Codexrev — `review` command dispatch (Feature 2: review pipeline).
- *
- * `scan` runs the six-role orchestrator (Phase 5), resolves a decision
- * (Phase 6's `resolverEngine.ts`), and — when `--fix` is set and that
- * decision is Block or Request Changes — runs the Breaker-Builder loop
- * (Phase 8's `breakerBuilderLoop.ts`) before rendering the final
- * JSON/Markdown/HTML report (Phase 7's `reportRenderer.ts`, `--output`
- * selects the directory) and exiting with the mapped code.
+ * `review` command dispatch. `scan` runs the six-role orchestrator, resolves
+ * a decision, and (with --fix, on Block/Request Changes) runs the
+ * Breaker-Builder loop before writing the JSON/Markdown/HTML report.
  */
 
 import { CodexrevError } from '../../../utils/errors.js';
@@ -20,7 +15,7 @@ export interface ReviewScanFlags {
   output?: string;
   fix?: boolean;
   maxIterations?: number;
-  /** The global `--print`/`-p` flag — forces non-interactive mode when set, per Phase 5's DoD. */
+  /** global --print/-p flag — forces non-interactive mode */
   print?: string;
 }
 
@@ -54,18 +49,11 @@ async function scanCommand(flags: ReviewScanFlags): Promise<void> {
       fix: flags.fix,
       maxIterations: flags.maxIterations,
     });
-    // 0 = Approve, 1 = Block or Request Changes (see resolverEngine.ts's
-    // exitCodeForDecision docstring for the Request-Changes mapping
-    // decision), 2 = Escalate — the Breaker-Builder loop hit its hard
-    // limits (max iterations, or every remaining finding hit its
-    // per-file retry cap) with blocking findings still unresolved.
+    // 0 approve, 1 block/request changes, 2 escalate (fix loop hit its
+    // iteration/retry limits with blocking findings still open)
     process.exitCode = breakerBuilder?.outcome === 'escalated' ? 2 : exitCodeForDecision(resolver.decision);
   } catch (err) {
-    // CodexrevError covers our own errors (DiffReaderError, RoleContractError,
-    // ConfigError, ...); ProviderError is a separate hierarchy (core/types.ts,
-    // shared with the general agent loop) — both are expected, user-facing
-    // failure modes here (bad diff, bad LLM JSON, missing/invalid API key),
-    // not bugs, so print a clean message instead of a raw stack trace.
+    // both are expected user-facing failures (bad diff, bad LLM json, bad api key), not bugs
     if (err instanceof CodexrevError || err instanceof ProviderError) {
       console.error(`[codexrev review] ${err.message}`);
       process.exitCode = 1;

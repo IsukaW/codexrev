@@ -1,13 +1,9 @@
 /**
- * Codexrev — bridges `runPipeline()`/`runBreakerBuilderLoop()`'s plain
- * callbacks into a live React state update for the persistent
- * interactive Ink session.
- *
- * Neither is a generator, both are promise-returning functions with
- * `onXStart`/`onXComplete`-style callbacks — this tiny typed event bus
- * is the standard way to feed that into a mounted React tree via
- * `useEffect`, without either one needing to know anything about Ink or
- * React.
+ * Bridges runPipeline()/runBreakerBuilderLoop()'s callbacks into React state
+ * updates for the persistent Ink session. Both are just promise-returning
+ * functions with onXStart/onXComplete callbacks, so a small typed event bus
+ * is the easiest way to feed a mounted tree via useEffect without either one
+ * knowing about Ink or React.
  */
 
 import { EventEmitter } from 'node:events';

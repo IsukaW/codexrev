@@ -1,6 +1,4 @@
-/**
- * Codexrev — extension system entry point.
- */
+// extension system entry point
 
 export {
   loadExtensions,

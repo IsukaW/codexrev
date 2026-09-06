@@ -19,12 +19,8 @@ export interface ModelConfig {
   vision?: boolean;
   maxInputTokens?: number;
   maxOutputTokens?: number;
-  /**
-   * Per-request client timeout (ms). Auto-set for local vendors (Ollama,
-   * LM Studio, LiteLLM) at add-time — see `DEFAULT_LOCAL_TIMEOUT_MS` in
-   * `providers/registry.ts`. Undefined leaves the SDK's own default
-   * (10 min) untouched, which is fine for cloud APIs.
-   */
+  // auto-set for local vendors (ollama/lmstudio/litellm) at add-time, see
+  // DEFAULT_LOCAL_TIMEOUT_MS in providers/registry.ts. cloud providers just use the SDK default.
   timeoutMs?: number;
   default?: boolean;
 }
@@ -46,11 +42,7 @@ export interface ProjectConfig {
   maxOutputTokens?: number;
   temperature?: number;
   topP?: number;
-  /**
-   * Legacy top-level sealed API key. Optional: when `providers[]` is
-   * populated, each provider entry owns its own key and this is omitted.
-   * Still written by configs that predate the multi-provider registry.
-   */
+  // legacy sealed key, from before providers[] existed — omitted once each provider owns its own
   apiKey?: EncryptedPayload;
   createdAt: string;
   updatedAt: string;

@@ -1,37 +1,23 @@
 /**
- * Codexrev — drives one `codexrev review scan` run end to end.
+ * Drives one `codexrev review scan` run end to end: loads settings, reads
+ * the diff, builds the LLM provider, runs the six-role orchestrator,
+ * resolves a decision, and (with --fix, on Block/Request Changes) runs the
+ * Breaker-Builder loop before writing anything final.
  *
- * Wires together everything built in Phases 2-9: loads settings, reads
- * the diff (`diffReader.ts`), builds the shared `ILLMProvider`
- * (`illmProvider.ts`), runs the six-role orchestrator, resolves a
- * decision (`resolverEngine.ts`) — and, when `--fix` is set and that
- * decision is Block or Request Changes, runs the Breaker-Builder loop
- * (`breakerBuilderLoop.ts`) before finalizing anything. Only ONE
- * `resolver_decision` audit line is written per run — the FINAL
- * decision (post-fix, if the loop ran) — matching Phase 6's "one final
- * line" wording; Phase 9 adds one `fix_attempt` audit line per applied
- * fix alongside it (appended the moment each fix lands, same
- * "never batch, never skip" discipline as role verdicts), plus a
- * second, fix-summary HTML report once the loop has run. Appends every
- * role verdict to `.codexrev/audit.jsonl` (`auditLogger.ts`) as it
- * happens, even on a Skip/Abort/error partial run (Golden Rule: never
- * skip the audit log), and renders the final JSON/Markdown/HTML scan
- * report (`reportRenderer.ts`) to `.codexrev/review-pipeline/reports/`
- * (or `--output <dir>`) reflecting that same final state — UNLESS the
- * pipeline errored before a single role completed, in which case there
- * is nothing reviewer-facing to show and no report is written (the audit
- * entry above is still the durable record of the attempt) — plus, when
- * `--fix` ran, a paired `fix-<timestamp>.html` in the same directory.
+ * Only one resolver_decision audit line gets written per run — the final
+ * decision, post-fix if the loop ran. Fix attempts each get their own audit
+ * line the moment they land, same as role verdicts, plus a paired
+ * fix-summary HTML report once the loop has run. Every role verdict goes to
+ * audit.jsonl as it happens, even on a partial/errored run — the audit log
+ * is never skipped. The scan report itself is skipped when the pipeline
+ * errored before any role completed, since there'd be nothing to show.
  *
- * Non-interactive mode (no TTY, or `--print`) prints plain ANSI verdict
- * lines as roles complete (`verdictPrinter.ts`) — no Ink involved.
- * Interactive mode mounts ONE persistent Ink app (`ReviewSessionView`)
- * for the whole session, fix loop included — deliberately not a fresh
- * mount per gate; see that file's docstring for the raw-mode bug that
- * caused.
+ * Non-interactive mode (no TTY, or --print) prints plain ANSI verdict lines
+ * as roles complete. Interactive mode keeps one Ink app mounted for the
+ * whole session including the fix loop — not remounted per gate, see
+ * ReviewSessionView for the raw-mode bug that caused.
  *
- * Kept separate from `handleReviewCommand.ts` so it's independently
- * testable without going through yargs argument parsing.
+ * Split out from handleReviewCommand.ts so it's testable without yargs.
  */
 
 import { promises as fs } from 'node:fs';
@@ -74,26 +60,26 @@ export interface ReviewSessionOptions {
   readonly cwd: string;
   readonly diffRef?: string;
   readonly ursPath?: string;
-  /** Force non-interactive mode regardless of TTY (e.g. the global `--print` flag was set). */
+  /** forces non-interactive mode regardless of TTY (--print) */
   readonly forceNonInteractive?: boolean;
-  /** `--output <dir>` — overrides the default `.codexrev/review-pipeline/reports/` location. */
+  /** --output <dir>, overrides the default reports location */
   readonly outputDir?: string;
-  /** `--fix` — attempt the Breaker-Builder loop if the scan's decision is Block or Request Changes. */
+  /** --fix, attempt the Breaker-Builder loop on Block/Request Changes */
   readonly fix?: boolean;
-  /** `--max-iterations <n>` — overrides `settings.reviewPipeline.maxFixIterations` for this run, still clamped to the hard ceiling (5). */
+  /** --max-iterations, still clamped to the hard ceiling */
   readonly maxIterations?: number;
-  /** Test-only override — bypasses `createLLMProvider(settings)` when given. */
+  /** test-only, bypasses createLLMProvider(settings) */
   readonly llmOverride?: ILLMProvider;
 }
 
 export interface ReviewSessionResult {
   readonly pipeline: PipelineRunResult;
   readonly resolver: ResolverResult;
-  /** Undefined exactly when no report was written — the pipeline errored before any role completed. */
+  /** undefined when no report was written (pipeline errored before any role completed) */
   readonly reportPaths?: ReportPaths;
-  /** Set only when `--fix` actually triggered the loop (decision was Block/Request Changes and the scan completed). */
+  /** set only when --fix actually triggered the loop */
   readonly breakerBuilder?: BreakerBuilderResult;
-  /** Absolute path to the Phase 9 fix-summary HTML report — set exactly when `breakerBuilder` is. */
+  /** absolute path to the fix-summary HTML report, set whenever breakerBuilder is */
   readonly fixReportPath?: string;
 }
 
@@ -108,9 +94,7 @@ export async function runReviewSession(opts: ReviewSessionOptions): Promise<Revi
 
   const interactive = !opts.forceNonInteractive && process.stdout.isTTY === true;
 
-  // One id per invocation — every entry this run writes carries it, so
-  // `audit.jsonl` (which accumulates across every run forever) stays
-  // groupable/readable as it grows. See auditLogger.ts's docstring.
+  // one id per invocation so audit.jsonl stays groupable as it grows
   const runId = newAuditRunId();
   await appendAuditEntry(opts.cwd, runStartAuditEntry(runId, diff.ref));
 
@@ -125,12 +109,11 @@ export async function runReviewSession(opts: ReviewSessionOptions): Promise<Revi
   let pipeline: PipelineRunResult;
   let breakerBuilder: BreakerBuilderResult | undefined;
   let fixReportPathValue: string | undefined;
-  /** Set when the fix loop itself throws (not a role verdict, a crash mid-loop) — rethrown after the audit/report tail below, never silently swallowed. */
+  /** set when the fix loop itself crashes; rethrown after the audit/report tail below */
   let fixLoopError: unknown;
 
-  // Interactive mode keeps ONE Ink app mounted across both the scan and
-  // (if it runs) the fix loop — same reasoning as Phase 5's single-mount
-  // fix for the raw-mode bug, just extended to cover the whole session.
+  // one Ink app mounted across the scan and (if it runs) the fix loop —
+  // same fix as the raw-mode bug, just covering the whole session now
   const interaction = interactive ? new InteractionChannel() : undefined;
   const events = interactive ? new ReviewSessionEventBus() : undefined;
   const app =
@@ -161,10 +144,8 @@ export async function runReviewSession(opts: ReviewSessionOptions): Promise<Revi
     });
     if (!interactive) printPipelineOutcome(pipeline);
 
-    // Resolve once to see whether --fix is even warranted. Not printed or
-    // audit-logged yet — only the FINAL decision (post-fix, if the loop
-    // runs) gets the one "resolver_decision" audit line and console
-    // banner, per this file's docstring.
+    // resolve once just to check whether --fix is warranted — not printed
+    // or audit-logged yet, only the final (post-fix) decision gets that
     let resolverResult = resolve(pipeline.aggregator.toJSON().roleOutputs, settings.reviewPipeline.resolverWeights);
 
     const shouldAttemptFix =
@@ -192,9 +173,7 @@ export async function runReviewSession(opts: ReviewSessionOptions): Promise<Revi
             ? (candidates, iteration) => events!.emit({ type: 'fix_batch_ready', candidates, iteration })
             : undefined,
           onFixAttempt: async (record) => {
-            // Audit-logged unconditionally, same as role verdicts (Golden
-            // Rule: every fix attempt gets an entry, Phase 9's "New" bullet
-            // 1) — independent of whether the mode also displays it.
+            // audit-logged unconditionally, same as role verdicts, regardless of display mode
             if (interactive) events!.emit({ type: 'fix_attempt', record });
             else printFixAttempt(record);
             await onFixAttemptAudit(record);
@@ -204,13 +183,10 @@ export async function runReviewSession(opts: ReviewSessionOptions): Promise<Revi
             : (output) => printVerdictLine(output),
         });
         if (!interactive) printBreakerBuilderOutcome(breakerBuilder);
-        // Recompute — the loop mutated `pipeline.aggregator` in place via
-        // `replaceRoleOutput`, so this reflects the post-fix state.
+        // recompute — loop mutated pipeline.aggregator in place, so this reflects post-fix state
         resolverResult = resolve(pipeline.aggregator.toJSON().roleOutputs, settings.reviewPipeline.resolverWeights);
 
-        // Second HTML report (Phase 9's "New" bullet 2/3) — what the loop
-        // actually changed, saved to the same reports dir as the scan
-        // report so the two sit side by side, paired by sharing `runId`.
+        // second HTML report, saved alongside the scan report and paired by runId
         const fixReportDir = opts.outputDir ? path.resolve(opts.cwd, opts.outputDir) : defaultReportsDir(opts.cwd);
         fixReportPathValue = await saveFixReport(
           {
@@ -224,33 +200,22 @@ export async function runReviewSession(opts: ReviewSessionOptions): Promise<Revi
           fixReportDir,
         );
       } catch (err) {
-        // Unlike a role failing during the scan (which `runPipeline`
-        // catches internally and turns into `outcome: 'errored'` — see
-        // that file's docstring), a role RE-RUN failing mid-fix-loop
-        // (e.g. a ProviderError, a transient "400" from the provider)
-        // used to propagate straight out of this whole function via the
-        // catch at the bottom, skipping every line below here — audit
-        // trail AND both HTML reports, even though the scan itself
-        // already completed successfully and any fixes applied before
-        // the crash are already durably audit-logged one by one (see
-        // `onFixAttempt` above). Reported live: a real `--fix` run hit a
-        // provider error mid-loop and neither report ever got written.
-        // Caught here instead, so control still reaches the unmount +
-        // audit + report tail below with whatever state exists —
-        // `resolverResult` stays at its PRE-FIX value (still accurate:
-        // the loop crashing means none of its edits are known-good) —
-        // and `fixLoopError` is rethrown only at the very end, once
-        // that tail has run, matching how `pipeline.error` is already
-        // handled for a scan-time failure.
+        // caught here (not left to propagate) so the unmount/audit/report
+        // tail below still runs even if a role re-run crashes mid-loop —
+        // used to just blow past all of that and we'd lose both reports
+        // even though the scan already succeeded and fixes so far were
+        // already logged one by one via onFixAttempt. resolverResult stays
+        // at its pre-fix value since a crashed loop means no edit here is
+        // trustworthy; fixLoopError gets rethrown at the very end, after
+        // the tail runs, same handling as pipeline.error below.
         fixLoopError = err;
       }
     }
 
     unmountApp();
     if (fixLoopError) {
-      // Visible before the raw error reprints via `handleReviewCommand.ts`'s
-      // catch — otherwise the last thing on screen is a stale fix-confirm
-      // gate with no indication *why* nothing happened after it.
+      // shown before the raw error reprints upstream, otherwise the last
+      // thing on screen is a stale fix-confirm gate with no explanation
       console.error('\nBreaker-Builder loop failed before it could finish — see the error below. The pre-fix scan results are still saved.');
     }
     if (interactive) {
@@ -258,11 +223,9 @@ export async function runReviewSession(opts: ReviewSessionOptions): Promise<Revi
       printPipelineOutcome(pipeline);
     }
 
-    // Resolve + audit-log unconditionally — even for outcome === 'errored'
-    // — so a role failure still leaves a complete, honest trail (Golden
-    // Rule). The console banner is skipped on 'errored' — a decision based
-    // on zero completed roles would be actively misleading right before
-    // the real error prints; the audit entry stays complete either way.
+    // audit-log unconditionally even on 'errored' so a failed run still
+    // leaves a complete trail; skip the console banner though, since a
+    // decision based on zero completed roles would be misleading here
     if (pipeline.outcome !== 'errored') {
       printResolverDecision(resolverResult);
     }
@@ -280,18 +243,10 @@ export async function runReviewSession(opts: ReviewSessionOptions): Promise<Revi
       }),
     );
 
-    // Render + save the report — UNLESS the pipeline errored before any
-    // role even completed. With zero role outputs, every section of the
-    // report would just read "did not run" — there's no real content to
-    // show, so writing one is noise the user has to notice and discard
-    // (reported live: a 0/6 early failure still silently wrote a file no
-    // one was told about). The audit trail above is still written
-    // unconditionally (Golden Rule: never skip the audit log) — that's
-    // the durable record of "a run was attempted and failed"; the HTML/
-    // JSON/MD report is specifically the reviewer-facing deliverable,
-    // which only exists once at least one role actually produced a
-    // verdict. Always an absolute path — --output may be given relative
-    // to the caller's cwd, and the DoD calls for printing an absolute one.
+    // skip the report if the pipeline errored before any role completed —
+    // with zero outputs every section would just say "did not run", so
+    // writing one is just noise. audit trail above still covers the attempt.
+    // always resolve to an absolute path since --output can be relative.
     const hasReportableContent = pipeline.outcome !== 'errored' || pipeline.ranRoles.length > 0;
     let paths: ReportPaths | undefined;
     if (hasReportableContent) {
@@ -310,29 +265,19 @@ export async function runReviewSession(opts: ReviewSessionOptions): Promise<Revi
         reportDir,
       );
       printReportPaths(paths);
-      // Alongside the scan report path, per Phase 9's "New" bullet 3 —
-      // only printed when the fix loop actually ran (`fixReportPathValue`
-      // is set exactly when `breakerBuilder` is).
+      // only printed when the fix loop actually ran
       if (fixReportPathValue) printFixReportPath(fixReportPathValue);
     } else {
       console.log('\nNo report generated — the pipeline failed before any role completed. The attempt is still recorded in the audit log.');
     }
 
     if (pipeline.outcome === 'errored') {
-      // Audit trail (and the report, if any role completed) are written —
-      // now surface the original error exactly as before
-      // (handleReviewCommand.ts still catches CodexrevError/ProviderError
-      // and prints a clean message + sets the exit code).
+      // audit/report already written above, now let the original error surface
       throw pipeline.error;
     }
 
     if (fixLoopError) {
-      // Same reasoning as the `pipeline.outcome === 'errored'` branch
-      // above, for a crash mid-fix-loop instead of mid-scan — the audit
-      // trail and both reports are already written (reflecting the
-      // pre-fix decision, since the loop never finished), so the
-      // original error can now surface exactly as it would have before
-      // this was caught.
+      // same deal, but for a crash mid-fix-loop instead of mid-scan
       throw fixLoopError;
     }
 

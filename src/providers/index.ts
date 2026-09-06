@@ -1,10 +1,5 @@
-/**
- * Codexrev — provider factory.
- *
- * Given a Settings object, returns a ContentGenerator bound to the
- * configured provider. The dispatch is driven by `PROVIDER_REGISTRY` so
- * adding a new provider only requires one entry in `registry.ts`.
- */
+// Given Settings, returns a ContentGenerator for the configured provider. Dispatch
+// runs off PROVIDER_REGISTRY, so a new provider only needs one entry in registry.ts.
 
 import type { ContentGenerator, ContentGeneratorConfig, ProviderId } from '../core/types.js';
 import type { Settings } from '../config/schema.js';
@@ -60,7 +55,7 @@ function buildConfig(settings: Settings): ContentGeneratorConfig {
 
 function assertKey(cfg: ContentGeneratorConfig): void {
   const meta = providerMeta(cfg.provider);
-  if (!meta.requiresApiKey) return; // local servers are key-less by design
+  if (!meta.requiresApiKey) return; // local servers don't need one
   if (!cfg.apiKey) {
     const hint = meta.envKeyVar ? `Set ${meta.envKeyVar} or use /auth.` : 'Configure credentials.';
     throw new AuthError(`No API key configured for provider "${cfg.provider}". ${hint}`);
@@ -69,9 +64,8 @@ function assertKey(cfg: ContentGeneratorConfig): void {
 
 export function buildProvider(settings: Settings): ContentGenerator {
   const cfg = buildConfig(settings);
-  // API key check is deferred to the first request so users can run
-  // `--help` and similar without configuring a key first. assertKey is
-  // only invoked from `requireKey` (used by the /auth slash command).
+  // key check is deferred to the first request so --help etc work without a key set;
+  // assertKey only runs from requireKey (the /auth command)
   switch (cfg.provider) {
     case 'openai':
       return new OpenAIGenerator(cfg);
@@ -94,13 +88,12 @@ export function buildProvider(settings: Settings): ContentGenerator {
   }
 }
 
-/** Helper used by the /auth slash command. Throws for providers that don't need a key. */
+// used by /auth; throws for providers that need a key but don't have one
 export function requireKey(settings: Settings): string {
   const cfg = buildConfig(settings);
   assertKey(cfg);
   if (!cfg.apiKey) {
-    // Provider doesn't require a key — there's nothing meaningful to return.
-    return '';
+    return ''; // provider doesn't require a key, nothing to return
   }
   return cfg.apiKey;
 }

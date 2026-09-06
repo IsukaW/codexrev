@@ -1,12 +1,7 @@
-/**
- * Codexrev — Business Analyst (BA) role.
- *
- * First role in the pipeline (Section 2: BA → Dev → Build → Sec → QA →
- * PM). Reads the diff against the URS (when one was given via `--urs`)
- * and flags behavioral drift: changes that don't map to any stated
- * requirement, or requirements the diff appears to only partially
- * address. Weighted 0.2 in the default Resolver.
- */
+// Business Analyst role — first in the pipeline (BA -> Dev -> Build -> Sec -> QA -> PM).
+// Reads the diff against the URS (when given via --urs) and flags behavioral
+// drift: changes that don't map to a stated requirement, or requirements the
+// diff only half-implements. Weighted 0.2 in the default resolver.
 
 import type { RoleOutput } from './roleContract.js';
 import type { RoleRunContext } from '../pipeline/roleRunContext.js';

@@ -1,37 +1,20 @@
-/**
- * Codexrev — Feature 2 (review-pipeline) Resolver Engine.
- *
- * Turns the six roles' verdicts into exactly one final decision —
- * Approve / Request Changes / Block — using the weighted scoring from
- * Section 2 (configurable via `settings.reviewPipeline.resolverWeights`,
- * Phase 3), plus the conflict rules from Section 2:
- *
- *   - "Sec always wins on exploitability": if the Security Auditor's
- *     own verdict is 'block', the final decision is forced to Block
- *     regardless of the weighted score.
- *   - "BA + QA both flag the same issue → upgrade severity by 1": when
- *     a BA finding and a QA finding land on the same file with
- *     overlapping line ranges, both are treated as independently
- *     corroborated and their severity is bumped one level
- *     (`bumpSeverity()`, Phase 3). If that bump reaches 'critical', the
- *     decision floor is raised to at least Request Changes.
- *
- * Neither the exact score thresholds (Approve/Request Changes/Block
- * cutoffs) nor the severity-bump-forces-a-floor rule are given verbatim
- * in the guide — logged as Phase 6 decisions (see the Decision Log in
- * `../README.md`).
- *
- * Scoring formula, revised post-Phase-8: the original per-role
- * contribution was `weight × verdictScore` alone (pass=0/flag=0.5/
- * block=1) — it threw away two signals the role contract already
- * carries: `confidence` (a low-confidence 'block' swung the score
- * exactly as hard as a certain one) and the actual `severity` of a
- * role's findings (a 'flag' with one 'info'-level nit scored identically
- * to a 'flag' citing a 'critical' CWE). `roleRiskScore()` below blends
- * verdict, worst-finding severity, and confidence — see its own
- * docstring for the exact math, and the Decision Log for why this
- * redesign happened.
- */
+// Turns six role verdicts into one final decision (Approve/Request Changes/Block)
+// using weighted scoring (weights configurable via settings.reviewPipeline.resolverWeights)
+// plus two conflict rules:
+//
+// - Sec always wins on exploitability: if Sec's own verdict is 'block', final
+//   decision is forced to Block no matter what the weighted score says.
+// - BA + QA flagging the same spot independently counts as corroboration —
+//   bump both findings' severity one level. If that bump reaches critical,
+//   the decision floor goes up to at least Request Changes.
+//
+// The exact score thresholds and the "bump forces a floor" rule aren't spelled
+// out anywhere upstream, they're our own call (see the Decision Log in ../README.md).
+//
+// roleRiskScore() blends verdict + worst finding severity + confidence instead
+// of just weight * verdictScore, because the naive version let a low-confidence
+// 'block' swing the score as hard as a certain one, and a 'flag' with one info-level
+// nit scored the same as a 'flag' citing a critical CWE.
 
 import {
   bumpSeverity,
@@ -52,14 +35,12 @@ export const RESOLVER_DECISION_LABELS: Readonly<Record<ResolverDecision, string>
   block: 'Block',
 };
 
-/** One finding from any role, tagged with its origin and (if a conflict rule fired) its pre-bump severity. */
 export interface ResolvedFinding extends Finding {
   readonly role: RoleId;
-  /** Present only when a conflict rule changed `severity` from what the role originally reported. */
-  readonly originalSeverity?: Severity;
+  readonly originalSeverity?: Severity; // set only when a conflict rule bumped severity
 }
 
-/** A conflict rule that fired during resolution — kept for the audit trail and the Phase 7 report. */
+// a conflict rule that fired during resolution, kept for the audit trail / report
 export interface ConflictRuleApplication {
   readonly rule: 'sec-exploitability-veto' | 'ba-qa-overlap-severity-bump';
   readonly description: string;
@@ -68,21 +49,16 @@ export interface ConflictRuleApplication {
 
 export interface ResolverResult {
   readonly decision: ResolverDecision;
-  /** Final weighted risk score, clamped to [0, 1]. Higher = more likely to Block. */
-  readonly score: number;
-  /** Each role's contribution to `score` (weight × verdict score for BA/Dev/Sec/QA/PM; the additive Build-failure term for Build). */
-  readonly perRoleContribution: Readonly<Partial<Record<RoleId, number>>>;
+  readonly score: number; // clamped [0,1], higher = more likely to block
+  readonly perRoleContribution: Readonly<Partial<Record<RoleId, number>>>; // weight * risk score per role, Build's is the flat additive term
   readonly resolvedFindings: readonly ResolvedFinding[];
   readonly appliedRules: readonly ConflictRuleApplication[];
-  /** Plain-English explanation of how the decision was reached (Usability NFR). */
   readonly rationale: string;
-  /** Roles that had no output when this resolution ran (partial pipeline run — skip/abort). */
-  readonly missingRoles: readonly RoleId[];
+  readonly missingRoles: readonly RoleId[]; // no output when this ran, i.e. a partial run (skip/abort)
 }
 
 const VERDICT_SCORE: Readonly<Record<Verdict, number>> = { pass: 0, flag: 0.5, block: 1 };
 
-/** Point value of each severity level, for the finding-evidence half of `roleRiskScore()`. */
 const SEVERITY_POINTS: Readonly<Record<Severity, number>> = {
   info: 0.1,
   low: 0.25,
@@ -91,7 +67,7 @@ const SEVERITY_POINTS: Readonly<Record<Severity, number>> = {
   critical: 1.0,
 };
 
-/** BA/Dev/Sec/QA/PM share the configurable weighted split (Build is scored separately — see below). */
+// BA/Dev/Sec/QA/PM share the configurable weight split; Build is scored separately below
 const WEIGHTED_ROLES: readonly RoleId[] = ['ba', 'dev', 'sec', 'qa', 'pm'];
 
 function maxFindingSeverityPoints(findings: readonly Finding[]): number {
@@ -99,26 +75,12 @@ function maxFindingSeverityPoints(findings: readonly Finding[]): number {
   return Math.max(...findings.map((f) => SEVERITY_POINTS[f.severity]));
 }
 
-/**
- * A role's risk contribution BEFORE its resolver weight is applied,
- * blending three signals:
- *
- *   1. The role's own verdict (`pass`/`flag`/`block`) — its holistic
- *      judgment call, which may rest on things a single finding's
- *      severity label doesn't fully capture.
- *   2. The worst individual finding's severity — an evidence-based
- *      floor/ceiling that protects against a role under-calling its own
- *      verdict for something severe (e.g. verdicting only 'flag' while
- *      citing a 'critical'-severity CWE finding; `max()` below means the
- *      severity wins in that case). Multiple findings beyond the worst
- *      one add a small, capped bonus — ten 'medium' issues are worse
- *      than one, but not ten times worse.
- *   3. The role's own stated `confidence` — a low-confidence verdict
- *      should not swing the final decision as hard as a certain one.
- *
- * Returns a value in [0, 1]; the caller multiplies by that role's
- * configured weight.
- */
+// A role's risk contribution before its weight is applied. Blends the role's
+// own verdict, the worst finding's severity (so a role can't under-call itself
+// by saying 'flag' while citing a critical CWE — max() lets severity win), a
+// small capped bonus for extra findings beyond the worst one (ten mediums are
+// worse than one, but not 10x worse), and confidence (a shaky verdict shouldn't
+// swing the decision as hard as a certain one). Returns [0,1].
 export function roleRiskScore(output: RoleOutput): number {
   const verdictBase = VERDICT_SCORE[output.verdict];
   const severityBase = maxFindingSeverityPoints(output.findings);
@@ -127,7 +89,7 @@ export function roleRiskScore(output: RoleOutput): number {
   return Math.max(verdictBase, evidenceBase) * output.confidence;
 }
 
-// Score thresholds — a Phase 6 judgment call, not given verbatim in the guide (see Decision Log).
+// thresholds are our own call, not spelled out upstream (see Decision Log)
 const BLOCK_THRESHOLD = 0.6;
 const REQUEST_CHANGES_THRESHOLD = 0.3;
 
@@ -151,12 +113,8 @@ function rangesOverlap(a: Finding, b: Finding): boolean {
   return a.lineStart <= b.lineEnd && b.lineStart <= a.lineEnd;
 }
 
-/**
- * Applies the "BA + QA same issue → severity+1" conflict rule. Returns
- * the full pooled `ResolvedFinding[]` from every role that ran (with
- * any bumped severities applied) plus the rule application record, if
- * it fired at least once.
- */
+// applies the BA+QA overlap bump, returns the pooled findings from every role
+// that ran plus the rule-application record if it fired at least once
 function applyBaQaOverlapRule(
   roleOutputs: Readonly<Partial<Record<RoleId, RoleOutput>>>,
 ): { resolvedFindings: ResolvedFinding[]; application?: ConflictRuleApplication } {
@@ -200,12 +158,9 @@ function applyBaQaOverlapRule(
   };
 }
 
-/**
- * Resolves the final decision from whatever role outputs are available.
- * Missing roles (a Skip/Abort stopped the pipeline early — Phase 5)
- * simply contribute 0 to the score; `missingRoles` records which ones,
- * so the rationale and the audit log stay honest about a partial run.
- */
+// resolves the final decision from whatever role outputs exist. missing roles
+// (a skip/abort stopped the pipeline early) just contribute 0 to the score —
+// missingRoles records which ones so the rationale stays honest about a partial run
 export function resolve(
   roleOutputs: Readonly<Partial<Record<RoleId, RoleOutput>>>,
   weights: ReviewPipelineResolverWeights,
@@ -224,15 +179,12 @@ export function resolve(
   }
   const baseScore = weightSum > 0 ? weightedTotal / weightSum : 0;
 
-  // Build stays a flat all-or-nothing weight (not the severity-scaled
-  // roleRiskScore above) — deliberately: build.ts only ever assigns
-  // 'high' severity to a genuine compiler error and reserves 'block' for
-  // exactly that case, while a 'flag' there means "couldn't run the
-  // tool" (an environment gap, not evidence of a code problem) and must
-  // contribute nothing. Reusing roleRiskScore would need Build's own
-  // "environment issue" findings excluded from the severity math to
-  // preserve that distinction — not worth the complexity when Build's
-  // severity grading is already effectively binary in practice.
+  // Build stays flat all-or-nothing on purpose, not the severity-scaled score
+  // above — it only ever assigns 'high' to a real compiler error and reserves
+  // 'block' for that, while 'flag' there just means the tool couldn't run
+  // (an environment gap, not a code problem) and should contribute nothing.
+  // Reusing roleRiskScore would need Build's env-failure findings excluded
+  // from the severity math, not worth it since Build's grading is basically binary anyway.
   const buildOutput = roleOutputs.build;
   const buildContribution = buildOutput?.verdict === 'block' ? weights.buildFailure : 0;
   perRoleContribution.build = buildContribution;
@@ -242,7 +194,7 @@ export function resolve(
 
   const appliedRules: ConflictRuleApplication[] = [];
 
-  // Conflict rule: Sec always wins on exploitability.
+  // Sec always wins on exploitability
   const secOutput = roleOutputs.sec;
   if (secOutput?.verdict === 'block') {
     decision = atLeast(decision, 'block');
@@ -253,7 +205,7 @@ export function resolve(
     });
   }
 
-  // Conflict rule: BA + QA same issue → severity+1.
+  // BA + QA same issue -> severity+1
   const { resolvedFindings, application } = applyBaQaOverlapRule(roleOutputs);
   if (application) {
     appliedRules.push(application);
@@ -313,16 +265,9 @@ function buildRationale(
   return parts.join(' ');
 }
 
-/**
- * Maps a `ResolverDecision` to the non-interactive exit code — 0 =
- * Approve, 1 = Block, per Section 2's exit-code table. "Request
- * Changes" isn't in that table; per the guide's own instruction to
- * propose and log a mapping, it's treated as exit code 1 for CI
- * purposes (a script gating on `$? === 0` should not proceed on
- * anything short of Approve). Exit code 2 ("Escalate") is reserved for
- * Phase 8's Breaker-Builder exhaustion path — the Resolver itself never
- * emits it.
- */
+// 0 = Approve, 1 = everything else (a CI script gating on $?===0 shouldn't
+// proceed on Request Changes either). exit code 2 ("Escalate") belongs to the
+// breaker-builder exhaustion path, the resolver itself never emits it.
 export function exitCodeForDecision(decision: ResolverDecision): 0 | 1 {
   return decision === 'approve' ? 0 : 1;
 }

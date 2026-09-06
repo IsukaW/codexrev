@@ -1,21 +1,10 @@
-/**
- * Codexrev — sandbox manager (orchestrator).
- *
- * Selects the appropriate sandbox backend based on the OS and the
- * sandbox mode setting:
- *
- *   - `auto`    : macOS uses seatbelt; Linux falls back to docker / podman;
- *                 Windows falls back to docker / wsl.
- *   - `seatbelt`: macOS-only `sandbox-exec` profiles. Errors on other OSes.
- *   - `docker`  : run commands inside `docker run --rm` containers.
- *   - `podman`  : same as docker but with the podman CLI.
- *   - `off`     : no sandbox; commands run in the host shell.
- *
- * The manager implements the `Sandbox` interface in `types.ts`. The
- * shell tool calls `sandbox.exec(command)` for every command. Each
- * backend returns a `SandboxResult` describing exit code, stdout,
- * stderr, and duration.
- */
+// Picks a sandbox backend based on OS + the sandbox mode setting.
+// auto: seatbelt on macOS, falls back to docker/podman on Linux, docker/wsl on Windows.
+// seatbelt: macOS-only sandbox-exec profiles, errors elsewhere.
+// docker/podman: runs the command inside a `run --rm` container.
+// off: no sandbox, runs straight in the host shell.
+// Shell tool calls sandbox.exec(command) for every command; each backend hands back
+// a SandboxResult with exit code, stdout, stderr, duration.
 
 import { promises as fs } from 'node:fs';
 import { execFile } from 'node:child_process';
@@ -30,7 +19,7 @@ export class SandboxError extends Error {
 }
 
 export interface SandboxResult {
-  /** Process exit code (0 if the sandbox itself succeeded but the inner command may differ). */
+  /** this is the inner command's exit code, not whether the sandbox itself worked */
   readonly exitCode: number;
   readonly stdout: string;
   readonly stderr: string;
@@ -42,26 +31,20 @@ export type SandboxMode = 'auto' | 'seatbelt' | 'docker' | 'podman' | 'off';
 
 export interface SandboxOptions {
   mode: SandboxMode;
-  /** Working directory inside the sandbox. */
   cwd?: string;
-  /** Maximum execution time in ms. Default 60_000. */
+  /** default 60_000 */
   timeoutMs?: number;
-  /** Extra environment variables. */
   env?: Record<string, string>;
-  /** Comma-separated extra allowlist for seatbelt. */
+  /** extra write paths for seatbelt */
   allowWrite?: string[];
 }
 
-/** Capability that all backends must satisfy. */
 export interface Sandbox {
   readonly mode: Exclude<SandboxMode, 'off'>;
-  /** True if the underlying binary/tooling is present on this machine. */
   available(): Promise<boolean>;
-  /** Run `argv` inside the sandbox. */
   exec(argv: ReadonlyArray<string>, opts: SandboxOptions): Promise<SandboxResult>;
 }
 
-/** Run a child process and capture output, with timeout. */
 function spawn(
   cmd: string,
   args: ReadonlyArray<string>,
@@ -94,10 +77,7 @@ function spawn(
   });
 }
 
-/**
- * Probe whether a binary is on PATH. Resolves to true / false, never
- * throws.
- */
+// checks if a binary is on PATH — never throws, just true/false
 async function hasBinary(name: string): Promise<boolean> {
   try {
     await spawn(name, ['--version'], { timeoutMs: 5_000 });
@@ -107,9 +87,7 @@ async function hasBinary(name: string): Promise<boolean> {
   }
 }
 
-/**
- * Probe an MCP-like "is X working" command by checking `--help`.
- */
+// same idea but via --help, for CLIs where --version isn't reliable
 async function hasHelp(name: string): Promise<boolean> {
   try {
     const r = await spawn(name, ['--help'], { timeoutMs: 5_000 });
@@ -119,9 +97,9 @@ async function hasHelp(name: string): Promise<boolean> {
   }
 }
 
-/* ─── Backend: Seatbelt (macOS) ─────────────────────────────────── */
+// Seatbelt (macOS)
 
-/** SBPL profile allowing common read paths but only writes to cwd. */
+// SBPL profile: reads are wide open, writes are locked to cwd (plus /tmp for scratch)
 function buildSeatbeltProfile(opts: SandboxOptions): string {
   const cwd = opts.cwd ?? process.cwd();
   const writes = (opts.allowWrite ?? [cwd]).map((p) => `(allow file-write* (subpath "${p}"))`).join('\n');
@@ -169,7 +147,7 @@ export class SeatbeltSandbox implements Sandbox {
   }
 }
 
-/* ─── Backend: Docker ──────────────────────────────────────────── */
+// Docker
 
 export class DockerSandbox implements Sandbox {
   readonly mode = 'docker' as const;
@@ -199,7 +177,7 @@ export class DockerSandbox implements Sandbox {
   }
 }
 
-/* ─── Backend: Podman ──────────────────────────────────────────── */
+// Podman, same shape as docker
 
 export class PodmanSandbox implements Sandbox {
   readonly mode = 'podman' as const;
@@ -229,10 +207,10 @@ export class PodmanSandbox implements Sandbox {
   }
 }
 
-/* ─── Off (passthrough) ────────────────────────────────────────── */
+// Off (passthrough)
 
 export class NoSandbox implements Sandbox {
-  readonly mode = 'docker' as const; // typed as `Excluding<off>`, fallback treated as docker
+  readonly mode = 'docker' as const; // Sandbox.mode excludes 'off', so this is just a placeholder
 
   async available(): Promise<boolean> {
     return true;
@@ -249,17 +227,14 @@ export class NoSandbox implements Sandbox {
   }
 }
 
-/* ─── Manager factory ──────────────────────────────────────────── */
+// Manager factory
 
 export interface ResolvedSandbox {
   readonly sandbox: Sandbox;
   readonly effectiveMode: SandboxMode;
 }
 
-/**
- * Pick the appropriate backend for the requested `mode`. With `auto` we
- * try (in order): seatbelt → docker → podman → off.
- */
+// auto tries seatbelt, then docker, then podman, then gives up and goes off
 export async function resolveSandbox(
   mode: SandboxMode = 'auto',
   cwd?: string,
@@ -282,13 +257,13 @@ export async function resolveSandbox(
     };
   }
 
-  void cwd; // Reserved for future per-cwd sandbox config.
+  void cwd; // not used yet, reserved for per-cwd sandbox config later
 
   for (const sb of attempts) {
     if (await sb.available()) {
       return { sandbox: sb, effectiveMode: sb.mode };
     }
   }
-  // None available — fall back to off so the user can still work.
+  // nothing available, fall back to off so the user isn't blocked
   return { sandbox: new NoSandbox(), effectiveMode: 'off' };
 }

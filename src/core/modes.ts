@@ -1,11 +1,5 @@
-/**
- * Codexrev — interaction mode definitions.
- *
- * Modes control how the agent processes user input:
- *   - Ask:   read-only Q&A, no state modifications.
- *   - Plan:  generates a step-by-step plan, no execution.
- *   - Agent: full pipeline (Committee → Breaker-Builder → Resolver) with fix loop.
- */
+// Interaction modes: Ask (read-only Q&A), Plan (step-by-step plan, no execution),
+// Agent (full pipeline with fix loop).
 
 import type { Tool } from '../tools/registry.js';
 
@@ -14,15 +8,12 @@ export type InteractionMode = 'ask' | 'plan' | 'agent';
 export const MODE_ORDER: readonly InteractionMode[] = ['ask', 'plan', 'agent'] as const;
 
 export interface ModeConfig {
-  /** Display label. */
   readonly label: string;
-  /** Ink color for the badge. */
+  /** Ink color for the badge */
   readonly color: string;
-  /** Short description shown in help. */
   readonly description: string;
-  /** Additional system-prompt instructions appended for this mode. */
   readonly systemPromptSuffix: string;
-  /** Whether this mode should strip write/mutating tools from the tool set. */
+  /** strip write/mutating tools when true */
   readonly readOnly: boolean;
 }
 
@@ -68,13 +59,12 @@ export const MODE_CONFIG: Record<InteractionMode, ModeConfig> = {
   },
 };
 
-/** Return the next mode in the cycle. */
+// cycles ask -> plan -> agent -> ask
 export function nextMode(current: InteractionMode): InteractionMode {
   const idx = MODE_ORDER.indexOf(current);
   return MODE_ORDER[(idx + 1) % MODE_ORDER.length];
 }
 
-/** Filter a tool set to only include read-only tools. */
 export function filterReadOnlyTools(tools: Map<string, Tool>): Map<string, Tool> {
   const READ_ONLY = new Set([
     'read_file',
