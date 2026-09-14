@@ -25,24 +25,33 @@ export interface DetectionFixture {
 
 export const DETECTION_FIXTURES: readonly DetectionFixture[] = [
   {
-    name: 'SQL injection',
-    file: 'app.ts',
-    content: `export function getUser(db: { query: (sql: string) => unknown }, id: string) {
-  const q = "SELECT * FROM users WHERE id=" + id;
-  return db.query(q);
+    name: 'Cross-boundary DB access (frontend calling database directly)',
+    file: 'src/frontend/UserProfile.tsx',
+    content: `import { Pool } from 'pg';
+
+const pool = new Pool();
+
+export async function loadUserProfile(id: string) {
+  // frontend component querying the database directly, bypassing the backend service boundary
+  const result = await pool.query('SELECT * FROM users WHERE id = $1', [id]);
+  return result.rows[0];
 }
 `,
-    expectRole: 'sec',
+    expectRole: 'architect',
   },
   {
-    name: 'Buffer overflow (unchecked write length)',
-    file: 'packet.ts',
-    content: `export function writeHeader(target: Buffer, header: string): void {
-  // header can exceed target's length — no bounds check before writing.
-  target.write(header, 0, 'utf-8');
+    name: 'Unreleased resource (DB connection never closed)',
+    file: 'reportExporter.ts',
+    content: `import { Pool } from 'pg';
+
+export async function exportReport(pool: Pool, id: string) {
+  const client = await pool.connect();
+  const result = await client.query('SELECT * FROM reports WHERE id = $1', [id]);
+  // client is never released back to the pool on any path, including this early return.
+  return result.rows;
 }
 `,
-    expectRole: 'sec',
+    expectRole: 'architect',
   },
   {
     name: 'Off-by-one (inclusive bound past array end)',

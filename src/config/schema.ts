@@ -42,11 +42,11 @@ export interface McpServerEntry {
 
 // Resolver Engine weights per role, review-pipeline feature. Defaults below match
 // the Section 2 values from the dev guide; buildFailure covers the deterministic
-// Build role which has no LLM verdict of its own so it's outside the BA/Dev/Sec/QA/PM split.
+// Build role which has no LLM verdict of its own so it's outside the BA/Architect/Dev/QA/PM split.
 export interface ReviewPipelineResolverWeights {
   ba: number;
+  architect: number;
   dev: number;
-  sec: number;
   qa: number;
   pm: number;
   buildFailure: number;
@@ -130,7 +130,7 @@ export const DEFAULT_SETTINGS: Settings = {
   verificationMode: 'auto',
   metadata: {},
   reviewPipeline: {
-    resolverWeights: { ba: 0.2, dev: 0.3, sec: 0.3, qa: 0.15, pm: 0.05, buildFailure: 0.4 },
+    resolverWeights: { ba: 0.2, architect: 0.3, dev: 0.3, qa: 0.15, pm: 0.05, buildFailure: 0.4 },
     maxFixIterations: MAX_FIX_ITERATIONS_CEILING,
   },
 };

@@ -13,7 +13,7 @@
  *
  * Polyglot repos can trip more than one marker — we run all of them and
  * pool the findings. Resolver gives Build failures their own weight
- * (0.4), separate from BA/Dev/Sec/QA/PM.
+ * (0.4), separate from BA/Architect/Dev/QA/PM.
  *
  * Fallback for buildless JS projects: without any of the four markers
  * this used to just pass with no real check. Now it runs `node --check`

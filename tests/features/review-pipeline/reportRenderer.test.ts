@@ -27,10 +27,10 @@ const WEIGHTS = DEFAULT_SETTINGS.reviewPipeline.resolverWeights;
 
 const DIFF_WITH_FINDING: ParsedDiff = {
   ref: 'staged',
-  raw: 'diff --git a/app.ts b/app.ts\n',
+  raw: 'diff --git a/db.ts b/db.ts\n',
   files: [
     {
-      path: 'app.ts',
+      path: 'db.ts',
       status: 'modified',
       hunks: [
         {
@@ -39,9 +39,9 @@ const DIFF_WITH_FINDING: ParsedDiff = {
           newStart: 1,
           newLines: 3,
           lines: [
-            { type: 'context', content: 'function getUser(id) {', oldLineNumber: 1, newLineNumber: 1 },
-            { type: 'add', content: '  const q = `SELECT * FROM users WHERE id=${id}`;', newLineNumber: 2 },
-            { type: 'add', content: '  return db.query(q);', newLineNumber: 3 },
+            { type: 'context', content: 'export async function getUser(id) {', oldLineNumber: 1, newLineNumber: 1 },
+            { type: 'add', content: '  const conn = pool.acquire();', newLineNumber: 2 },
+            { type: 'add', content: '  return conn.query(id);', newLineNumber: 3 },
           ],
         },
       ],
@@ -54,26 +54,25 @@ function roleOutputs(): Readonly<Partial<Record<RoleOutput['role'], RoleOutput>>
     ba: { role: 'ba', verdict: 'pass', findings: [], summary: 'No drift.', confidence: 0.9 },
     dev: { role: 'dev', verdict: 'pass', findings: [], summary: 'Looks fine structurally.', confidence: 0.9 },
     build: { role: 'build', verdict: 'pass', findings: [], summary: 'No build config.', confidence: 1 },
-    sec: {
-      role: 'sec',
+    architect: {
+      role: 'architect',
       verdict: 'block',
       findings: [
         {
-          id: 'sec-1',
+          id: 'arch-1',
           severity: 'critical',
-          cwe: 'CWE-89',
-          file: 'app.ts',
+          file: 'db.ts',
           lineStart: 2,
           lineEnd: 2,
-          description: 'SQL injection via unsanitized <id> & "quotes"',
-          suggestedFix: 'Use a parameterized query.',
+          description: 'Database connection is acquired but never released, leaking a connection on every call.',
+          suggestedFix: 'Release the connection in a finally block.',
         },
       ],
-      summary: 'Found a SQL injection vector.',
+      summary: 'Found a resource-lifecycle violation.',
       confidence: 0.95,
     },
     qa: { role: 'qa', verdict: 'pass', findings: [], summary: 'Nothing untested that stands out.', confidence: 0.8 },
-    pm: { role: 'pm', verdict: 'flag', findings: [], summary: 'Sec finding is the headline here.', confidence: 0.85 },
+    pm: { role: 'pm', verdict: 'flag', findings: [], summary: 'Architect finding is the headline here.', confidence: 0.85 },
   };
 }
 
@@ -87,7 +86,7 @@ function makeReportData(): ReportData {
     roleOutputs: outputs,
     resolver,
     pipelineOutcome: 'completed',
-    ranRoles: ['ba', 'dev', 'build', 'sec', 'qa', 'pm'],
+    ranRoles: ['ba', 'architect', 'dev', 'build', 'qa', 'pm'],
     skippedRoles: [],
   };
 }
@@ -100,7 +99,7 @@ describe('buildChangeCoverageMap', () => {
     const line2 = coverage.find((c) => c.line === 2);
     const line3 = coverage.find((c) => c.line === 3);
     expect(line2?.findings).toHaveLength(1);
-    expect(line2?.findings[0].role).toBe('sec');
+    expect(line2?.findings[0].role).toBe('architect');
     expect(line3?.findings).toHaveLength(0);
   });
 
@@ -114,11 +113,11 @@ describe('renderReportJson', () => {
   it('produces valid JSON with the decision, all six roles, and the coverage map', () => {
     const data = makeReportData();
     const parsed = JSON.parse(renderReportJson(data));
-    expect(parsed.decision.value).toBe('block'); // Sec veto forces Block
+    expect(parsed.decision.value).toBe('block'); // Architect veto forces Block
     expect(parsed.decision.label).toBe('Block');
     expect(parsed.roles).toHaveLength(6);
-    const secRole = parsed.roles.find((r: { role: string }) => r.role === 'sec');
-    expect(secRole.findings).toHaveLength(1);
+    const architectRole = parsed.roles.find((r: { role: string }) => r.role === 'architect');
+    expect(architectRole.findings).toHaveLength(1);
     expect(parsed.changeCoverage).toHaveLength(2);
   });
 
@@ -136,8 +135,8 @@ describe('renderReportMarkdown', () => {
   it('includes the decision banner, role sections, and a findings table', () => {
     const md = renderReportMarkdown(makeReportData());
     expect(md).toContain('# Codexrev Review — Block');
-    expect(md).toContain('### Security Auditor — BLOCK (1 finding)');
-    expect(md).toContain('CWE-89');
+    expect(md).toContain('### Architect — BLOCK (1 finding)');
+    expect(md).toContain('never released');
     expect(md).toContain('## Change Coverage Map');
   });
 
@@ -166,8 +165,8 @@ describe('renderReportHtml', () => {
     const html = renderReportHtml(makeReportData());
     expect(html).toMatch(/^<!doctype html>/);
     expect(html).toContain('<title>Codexrev Review — Block</title>');
-    expect(html).toContain('Security Auditor');
-    expect(html).toContain('CWE-89');
+    expect(html).toContain('Architect');
+    expect(html).toContain('never released');
     // Self-contained: no external stylesheet/script references.
     expect(html).not.toMatch(/<link[^>]*rel=["']stylesheet/i);
     expect(html).not.toMatch(/<script[^>]*src=/i);
@@ -198,7 +197,7 @@ describe('renderReportHtml', () => {
 
   it('renders the change-coverage map with the flagged line visible', () => {
     const html = renderReportHtml(makeReportData());
-    expect(html).toContain('SELECT * FROM users');
+    expect(html).toContain('pool.acquire()');
     expect(html).toContain('sev-critical');
   });
 });
@@ -263,13 +262,13 @@ describe('saveReport', () => {
 
 const SAMPLE_FIX_ATTEMPT: FixAttemptRecord = {
   iteration: 1,
-  role: 'sec',
-  findingId: 'sec-1',
-  file: 'app.ts',
+  role: 'architect',
+  findingId: 'arch-1',
+  file: 'db.ts',
   fixerStage: 'llm',
-  description: 'Parameterize the query to remove the SQL injection.',
-  oldString: "const q = 'SELECT * FROM users WHERE id=' + id;",
-  newString: 'const q = "SELECT * FROM users WHERE id=?"; // bound separately',
+  description: 'Release the connection in a finally block to fix the leak.',
+  oldString: 'const conn = pool.acquire();',
+  newString: 'const conn = pool.acquire(); // released in a finally block',
 };
 
 function makeFixReportData(overrides: Partial<FixReportData> = {}): FixReportData {
@@ -302,9 +301,9 @@ describe('renderFixReportHtml', () => {
   it('shows the fixer stage, file, and before/after code for each fix attempt', () => {
     const html = renderFixReportHtml(makeFixReportData());
     expect(html).toContain('LLM EditGenerator');
-    expect(html).toContain('app.ts');
-    expect(html).toContain('SELECT * FROM users WHERE id=');
-    expect(html).toContain('bound separately');
+    expect(html).toContain('db.ts');
+    expect(html).toContain('pool.acquire()');
+    expect(html).toContain('released in a finally block');
   });
 
   it('labels a deterministic fix distinctly from an LLM one', () => {

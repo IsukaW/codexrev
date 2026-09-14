@@ -49,7 +49,7 @@ describe('runBreakerBuilderLoop — resolved without any work', () => {
   it('returns "resolved" immediately with 0 iterations when nothing is blocking', async () => {
     const aggregator = new ContextAggregator(EMPTY_DIFF);
     aggregator.addRoleOutput({ role: 'ba', verdict: 'pass', findings: [], summary: 'ok', confidence: 0.9 });
-    aggregator.addRoleOutput({ role: 'sec', verdict: 'flag', findings: [], summary: 'advisory only', confidence: 0.9 });
+    aggregator.addRoleOutput({ role: 'architect', verdict: 'flag', findings: [], summary: 'advisory only', confidence: 0.9 });
 
     const unusedLlm: ILLMProvider = {
       id: 'openai',
@@ -142,11 +142,11 @@ describe('runBreakerBuilderLoop — LLM fallback path', () => {
 
     const aggregator = new ContextAggregator(EMPTY_DIFF);
     aggregator.addRoleOutput({
-      role: 'sec',
+      role: 'architect',
       verdict: 'block',
       findings: [
         {
-          id: 'sec-1',
+          id: 'arch-1',
           severity: 'critical',
           cwe: 'CWE-89',
           file: 'app.ts',
@@ -169,7 +169,7 @@ describe('runBreakerBuilderLoop — LLM fallback path', () => {
             description: 'Switched to a parameterized query.',
           });
         }
-        return jsonReply(passOutput('sec'));
+        return jsonReply(passOutput('architect'));
       },
       async *stream() {
         yield { kind: 'finish', reason: 'stop' };
@@ -181,7 +181,7 @@ describe('runBreakerBuilderLoop — LLM fallback path', () => {
     expect(result.outcome).toBe('resolved');
     expect(result.fixAttempts).toHaveLength(1);
     expect(result.fixAttempts[0].fixerStage).toBe('llm');
-    expect(aggregator.getRoleOutput('sec')?.verdict).toBe('pass');
+    expect(aggregator.getRoleOutput('architect')?.verdict).toBe('pass');
     const content = await fs.readFile(path.join(tmpRoot, 'app.ts'), 'utf-8');
     expect(content).toContain('const params = [id]');
   });
@@ -209,10 +209,10 @@ describe('runBreakerBuilderLoop — never stages its own edits (traceability)', 
 
     const aggregator = new ContextAggregator(EMPTY_DIFF);
     aggregator.addRoleOutput({
-      role: 'sec',
+      role: 'architect',
       verdict: 'block',
       findings: [
-        { id: 'sec-1', severity: 'critical', cwe: 'CWE-89', file: 'app.ts', lineStart: 1, lineEnd: 1, description: 'SQL injection.' },
+        { id: 'arch-1', severity: 'critical', cwe: 'CWE-89', file: 'app.ts', lineStart: 1, lineEnd: 1, description: 'SQL injection.' },
       ],
       summary: 'SQL injection found.',
       confidence: 0.95,
@@ -228,7 +228,7 @@ describe('runBreakerBuilderLoop — never stages its own edits (traceability)', 
             description: 'Switched to a parameterized query.',
           });
         }
-        return jsonReply(passOutput('sec'));
+        return jsonReply(passOutput('architect'));
       },
       async *stream() {
         yield { kind: 'finish', reason: 'stop' };
@@ -261,10 +261,10 @@ describe('runBreakerBuilderLoop — works on a brand-new repo with no commits ye
 
     const aggregator = new ContextAggregator(EMPTY_DIFF);
     aggregator.addRoleOutput({
-      role: 'sec',
+      role: 'architect',
       verdict: 'block',
       findings: [
-        { id: 'sec-1', severity: 'critical', cwe: 'CWE-89', file: 'app.ts', lineStart: 1, lineEnd: 1, description: 'SQL injection.' },
+        { id: 'arch-1', severity: 'critical', cwe: 'CWE-89', file: 'app.ts', lineStart: 1, lineEnd: 1, description: 'SQL injection.' },
       ],
       summary: 'SQL injection found.',
       confidence: 0.95,
@@ -280,7 +280,7 @@ describe('runBreakerBuilderLoop — works on a brand-new repo with no commits ye
             description: 'Switched to a parameterized query.',
           });
         }
-        return jsonReply(passOutput('sec'));
+        return jsonReply(passOutput('architect'));
       },
       async *stream() {
         yield { kind: 'finish', reason: 'stop' };
@@ -332,9 +332,9 @@ describe('runBreakerBuilderLoop — escalation', () => {
 
     const aggregator = new ContextAggregator(EMPTY_DIFF);
     aggregator.addRoleOutput({
-      role: 'sec',
+      role: 'architect',
       verdict: 'block',
-      findings: [{ id: 'sec-1', severity: 'high', file: 'x.ts', lineStart: 1, lineEnd: 1, description: 'still broken' }],
+      findings: [{ id: 'arch-1', severity: 'high', file: 'x.ts', lineStart: 1, lineEnd: 1, description: 'still broken' }],
       summary: 'still broken',
       confidence: 0.9,
     });
@@ -351,9 +351,9 @@ describe('runBreakerBuilderLoop — escalation', () => {
           return jsonReply({ oldString: '// TARGET_LINE', newString: '// TARGET_LINE', description: 'no-op fix (test)' });
         }
         return jsonReply({
-          role: 'sec',
+          role: 'architect',
           verdict: 'block',
-          findings: [{ id: 'sec-1', severity: 'high', file: 'x.ts', lineStart: 1, lineEnd: 1, description: 'still broken' }],
+          findings: [{ id: 'arch-1', severity: 'high', file: 'x.ts', lineStart: 1, lineEnd: 1, description: 'still broken' }],
           summary: 'still broken',
           confidence: 0.9,
         });
@@ -381,11 +381,11 @@ describe('runBreakerBuilderLoop — escalation', () => {
     // 2 iterations — this isolates the maxIterations limit specifically.
     const aggregator = new ContextAggregator(EMPTY_DIFF);
     aggregator.addRoleOutput({
-      role: 'sec',
+      role: 'architect',
       verdict: 'block',
       findings: [
-        { id: 'sec-1', severity: 'high', file: 'a.ts', lineStart: 1, lineEnd: 1, description: 'still broken a' },
-        { id: 'sec-2', severity: 'high', file: 'b.ts', lineStart: 1, lineEnd: 1, description: 'still broken b' },
+        { id: 'arch-1', severity: 'high', file: 'a.ts', lineStart: 1, lineEnd: 1, description: 'still broken a' },
+        { id: 'arch-2', severity: 'high', file: 'b.ts', lineStart: 1, lineEnd: 1, description: 'still broken b' },
       ],
       summary: 'still broken',
       confidence: 0.9,
@@ -401,11 +401,11 @@ describe('runBreakerBuilderLoop — escalation', () => {
           return jsonReply({ oldString: marker, newString: marker, description: 'no-op fix (test)' });
         }
         return jsonReply({
-          role: 'sec',
+          role: 'architect',
           verdict: 'block',
           findings: [
-            { id: 'sec-1', severity: 'high', file: 'a.ts', lineStart: 1, lineEnd: 1, description: 'still broken a' },
-            { id: 'sec-2', severity: 'high', file: 'b.ts', lineStart: 1, lineEnd: 1, description: 'still broken b' },
+            { id: 'arch-1', severity: 'high', file: 'a.ts', lineStart: 1, lineEnd: 1, description: 'still broken a' },
+            { id: 'arch-2', severity: 'high', file: 'b.ts', lineStart: 1, lineEnd: 1, description: 'still broken b' },
           ],
           summary: 'still broken',
           confidence: 0.9,
@@ -465,9 +465,9 @@ describe('runBreakerBuilderLoop — interactive gate (LLM edits only)', () => {
     await fs.writeFile(path.join(tmpRoot, 'app.ts'), original, 'utf-8');
     const aggregator = new ContextAggregator(EMPTY_DIFF);
     aggregator.addRoleOutput({
-      role: 'sec',
+      role: 'architect',
       verdict: 'block',
-      findings: [{ id: 'sec-1', severity: 'critical', file: 'app.ts', lineStart: 1, lineEnd: 1, description: 'SQL injection.' }],
+      findings: [{ id: 'arch-1', severity: 'critical', file: 'app.ts', lineStart: 1, lineEnd: 1, description: 'SQL injection.' }],
       summary: 'SQL injection',
       confidence: 0.9,
     });
@@ -482,7 +482,7 @@ describe('runBreakerBuilderLoop — interactive gate (LLM edits only)', () => {
             description: 'fix',
           });
         }
-        return jsonReply(passOutput('sec'));
+        return jsonReply(passOutput('architect'));
       },
       async *stream() {
         yield { kind: 'finish', reason: 'stop' };
@@ -506,9 +506,9 @@ describe('runBreakerBuilderLoop — interactive gate (LLM edits only)', () => {
     await fs.writeFile(path.join(tmpRoot, 'app.ts'), original, 'utf-8');
     const aggregator = new ContextAggregator(EMPTY_DIFF);
     aggregator.addRoleOutput({
-      role: 'sec',
+      role: 'architect',
       verdict: 'block',
-      findings: [{ id: 'sec-1', severity: 'critical', file: 'app.ts', lineStart: 1, lineEnd: 1, description: 'SQL injection.' }],
+      findings: [{ id: 'arch-1', severity: 'critical', file: 'app.ts', lineStart: 1, lineEnd: 1, description: 'SQL injection.' }],
       summary: 'SQL injection',
       confidence: 0.9,
     });
@@ -523,7 +523,7 @@ describe('runBreakerBuilderLoop — interactive gate (LLM edits only)', () => {
             description: 'fix',
           });
         }
-        return jsonReply(passOutput('sec'));
+        return jsonReply(passOutput('architect'));
       },
       async *stream() {
         yield { kind: 'finish', reason: 'stop' };
@@ -549,9 +549,9 @@ describe('runBreakerBuilderLoop — batched fix-confirm gate', () => {
     await fs.writeFile(path.join(tmpRoot, 'greet.ts'), "return 'Hello, ' + name;\n", 'utf-8');
     const aggregator = new ContextAggregator(EMPTY_DIFF);
     aggregator.addRoleOutput({
-      role: 'sec',
+      role: 'architect',
       verdict: 'block',
-      findings: [{ id: 'sec-1', severity: 'critical', file: 'app.ts', lineStart: 1, lineEnd: 1, description: 'SQL injection.' }],
+      findings: [{ id: 'arch-1', severity: 'critical', file: 'app.ts', lineStart: 1, lineEnd: 1, description: 'SQL injection.' }],
       summary: 'SQL injection',
       confidence: 0.9,
     });
@@ -583,7 +583,7 @@ describe('runBreakerBuilderLoop — batched fix-confirm gate', () => {
           description: 'default to stranger',
         });
       }
-      return jsonReply(passOutput((req.systemInstruction ?? '').includes('You are the Security Auditor') ? 'sec' : 'qa'));
+      return jsonReply(passOutput((req.systemInstruction ?? '').includes('You are the Architect') ? 'architect' : 'qa'));
     },
     async *stream() {
       yield { kind: 'finish', reason: 'stop' };
@@ -770,9 +770,9 @@ describe('runBreakerBuilderLoop — callbacks', () => {
     await fs.writeFile(path.join(tmpRoot, 'app.ts'), "const q = 'SELECT * FROM users WHERE id=' + id;\n", 'utf-8');
     const aggregator = new ContextAggregator(EMPTY_DIFF);
     aggregator.addRoleOutput({
-      role: 'sec',
+      role: 'architect',
       verdict: 'block',
-      findings: [{ id: 'sec-1', severity: 'critical', file: 'app.ts', lineStart: 1, lineEnd: 1, description: 'SQL injection.' }],
+      findings: [{ id: 'arch-1', severity: 'critical', file: 'app.ts', lineStart: 1, lineEnd: 1, description: 'SQL injection.' }],
       summary: 'SQL injection',
       confidence: 0.9,
     });
@@ -787,7 +787,7 @@ describe('runBreakerBuilderLoop — callbacks', () => {
             description: 'fix',
           });
         }
-        return jsonReply(passOutput('sec'));
+        return jsonReply(passOutput('architect'));
       },
       async *stream() {
         yield { kind: 'finish', reason: 'stop' };

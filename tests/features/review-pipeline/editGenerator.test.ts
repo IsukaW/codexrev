@@ -24,7 +24,7 @@ afterEach(async () => {
 });
 
 const FINDING: Finding = {
-  id: 'sec-1',
+  id: 'arch-1',
   severity: 'critical',
   cwe: 'CWE-89',
   file: 'app.ts',

@@ -3,7 +3,7 @@ import { exitCodeForDecision, resolve, roleRiskScore } from '../../../src/featur
 import { DEFAULT_SETTINGS } from '../../../src/config/schema.js';
 import type { Finding, RoleId, RoleOutput } from '../../../src/features/review-pipeline/roles/roleContract.js';
 
-const WEIGHTS = DEFAULT_SETTINGS.reviewPipeline.resolverWeights; // ba .2, dev .3, sec .3, qa .15, pm .05, buildFailure .4
+const WEIGHTS = DEFAULT_SETTINGS.reviewPipeline.resolverWeights; // ba .2, architect .3, dev .3, qa .15, pm .05, buildFailure .4
 
 // Confidence defaults to 1 here so weight-math tests use clean, exact
 // numbers — confidence-scaling itself gets its own dedicated tests below.
@@ -14,9 +14,9 @@ function role(role: RoleId, verdict: RoleOutput['verdict'], findings: Finding[] 
 function allPass(): Readonly<Partial<Record<RoleId, RoleOutput>>> {
   return {
     ba: role('ba', 'pass'),
+    architect: role('architect', 'pass'),
     dev: role('dev', 'pass'),
     build: role('build', 'pass'),
-    sec: role('sec', 'pass'),
     qa: role('qa', 'pass'),
     pm: role('pm', 'pass'),
   };
@@ -81,8 +81,8 @@ describe('resolverEngine — weighted scoring (full confidence, no findings)', (
     const roles = {
       ...allPass(),
       ba: role('ba', 'block'),
+      architect: role('architect', 'block'),
       dev: role('dev', 'block'),
-      sec: role('sec', 'block'),
       qa: role('qa', 'block'),
       pm: role('pm', 'block'),
       build: role('build', 'block'),
@@ -109,8 +109,8 @@ describe('roleRiskScore — the redesigned per-role formula', () => {
   it("a severe finding overrides an under-called verdict — the old formula couldn't see this at all", () => {
     // Old formula: verdict 'flag' always scored 0.5, no matter what the
     // finding said. New formula: a 'critical' finding wins via max().
-    const output = role('sec', 'flag', [
-      { id: 'sec-1', severity: 'critical', cwe: 'CWE-89', file: 'x.ts', lineStart: 1, lineEnd: 1, description: 'SQL injection' },
+    const output = role('architect', 'flag', [
+      { id: 'arch-1', severity: 'critical', file: 'db.ts', lineStart: 1, lineEnd: 1, description: 'Database connection is acquired but never released, leaking a connection on every call.' },
     ]);
     expect(roleRiskScore(output)).toBe(1); // max(0.5 verdict, 1.0 severity) * 1 confidence
   });
@@ -139,10 +139,10 @@ describe('roleRiskScore — the redesigned per-role formula', () => {
   });
 
   it('a full-confidence critical block cannot exceed 1 regardless of extra findings', () => {
-    const output = role('sec', 'block', [
-      { id: 'sec-1', severity: 'critical', file: 'x.ts', lineStart: 1, lineEnd: 1, description: 'a' },
-      { id: 'sec-2', severity: 'critical', file: 'x.ts', lineStart: 2, lineEnd: 2, description: 'b' },
-      { id: 'sec-3', severity: 'critical', file: 'x.ts', lineStart: 3, lineEnd: 3, description: 'c' },
+    const output = role('architect', 'block', [
+      { id: 'arch-1', severity: 'critical', file: 'x.ts', lineStart: 1, lineEnd: 1, description: 'a' },
+      { id: 'arch-2', severity: 'critical', file: 'x.ts', lineStart: 2, lineEnd: 2, description: 'b' },
+      { id: 'arch-3', severity: 'critical', file: 'x.ts', lineStart: 3, lineEnd: 3, description: 'c' },
     ]);
     expect(roleRiskScore(output)).toBe(1);
   });
@@ -150,34 +150,36 @@ describe('roleRiskScore — the redesigned per-role formula', () => {
 
 describe('resolverEngine — a severe finding drives the overall score even under a soft verdict', () => {
   it('a low-confidence "flag" citing a critical finding still contributes meaningfully (severity overrides the verdict-only view)', () => {
-    // Sec verdicts only 'flag' (soft) but the finding itself is 'critical'
-    // — under the OLD formula this contributed just weight*0.5 regardless.
-    // Under the new formula, severity wins: weight * 1.0 * confidence.
-    const roles = { ...allPass(), sec: role('sec', 'flag', [
-      { id: 'sec-1', severity: 'critical', cwe: 'CWE-89', file: 'x.ts', lineStart: 1, lineEnd: 1, description: 'SQL injection' },
+    // Architect verdicts only 'flag' (soft) but the finding itself is
+    // 'critical' — under the OLD formula this contributed just
+    // weight*0.5 regardless. Under the new formula, severity wins:
+    // weight * 1.0 * confidence.
+    const roles = { ...allPass(), architect: role('architect', 'flag', [
+      { id: 'arch-1', severity: 'critical', file: 'db.ts', lineStart: 1, lineEnd: 1, description: 'Database connection is acquired but never released, leaking a connection on every call.' },
     ], 0.8) };
     const result = resolve(roles, WEIGHTS);
     // weight .3 * max(0.5, 1.0) * 0.8 confidence = 0.24
-    expect(result.perRoleContribution.sec).toBeCloseTo(0.24, 5);
+    expect(result.perRoleContribution.architect).toBeCloseTo(0.24, 5);
   });
 });
 
-describe('resolverEngine — conflict rule: Sec always wins on exploitability', () => {
+describe('resolverEngine — conflict rule: Architect always wins on architectural integrity', () => {
   it('forces Block even when the weighted score alone would only be Request Changes or Approve', () => {
-    // Sec alone blocking contributes 0.3 to the score (Request Changes range),
-    // but the veto rule must force it to Block outright regardless of the number.
-    const roles = { ...allPass(), sec: role('sec', 'block', [
-      { id: 'sec-1', severity: 'critical', cwe: 'CWE-89', file: 'x.ts', lineStart: 1, lineEnd: 1, description: 'SQL injection' },
+    // Architect alone blocking contributes 0.3 to the score (Request
+    // Changes range), but the veto rule must force it to Block outright
+    // regardless of the number.
+    const roles = { ...allPass(), architect: role('architect', 'block', [
+      { id: 'arch-1', severity: 'critical', file: 'db.ts', lineStart: 1, lineEnd: 1, description: 'Database connection is acquired but never released, leaking a connection on every call.' },
     ]) };
     const result = resolve(roles, WEIGHTS);
     expect(result.decision).toBe('block');
-    expect(result.appliedRules.some((r) => r.rule === 'sec-exploitability-veto')).toBe(true);
+    expect(result.appliedRules.some((r) => r.rule === 'architect-integrity-veto')).toBe(true);
   });
 
-  it('does not fire when Sec only flags (not blocks)', () => {
-    const roles = { ...allPass(), sec: role('sec', 'flag') };
+  it('does not fire when Architect only flags (not blocks)', () => {
+    const roles = { ...allPass(), architect: role('architect', 'flag') };
     const result = resolve(roles, WEIGHTS);
-    expect(result.appliedRules.some((r) => r.rule === 'sec-exploitability-veto')).toBe(false);
+    expect(result.appliedRules.some((r) => r.rule === 'architect-integrity-veto')).toBe(false);
   });
 });
 
@@ -238,7 +240,7 @@ describe('resolverEngine — partial runs (Skip/Abort/error)', () => {
   it('missing roles contribute 0 and are listed in missingRoles', () => {
     const roles: Readonly<Partial<Record<RoleId, RoleOutput>>> = { ba: role('ba', 'pass'), dev: role('dev', 'pass') };
     const result = resolve(roles, WEIGHTS);
-    expect(result.missingRoles).toEqual(['build', 'sec', 'qa', 'pm']);
+    expect(result.missingRoles).toEqual(['architect', 'build', 'qa', 'pm']);
     expect(result.rationale).toMatch(/partial run/i);
   });
 

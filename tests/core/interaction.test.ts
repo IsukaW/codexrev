@@ -27,7 +27,7 @@ describe('InteractionChannel — requestStageGate (Feature 2, Phase 5)', () => {
     // makes subsequent request*() calls reject immediately.
     const channel = new InteractionChannel();
     channel.abort();
-    await expect(channel.requestStageGate('sec', 'Security Auditor', 'block', 'Found a problem.')).rejects.toThrow(
+    await expect(channel.requestStageGate('architect', 'Architect', 'block', 'Found a problem.')).rejects.toThrow(
       'interaction aborted',
     );
   });

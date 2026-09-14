@@ -316,8 +316,8 @@ describe('loadSettings — reviewPipeline settings (Feature 2 — Phase 3)', () 
     // Deep-merged: only `qa` was overridden, the rest keep their Section 2 defaults.
     expect(s.reviewPipeline.resolverWeights).toEqual({
       ba: 0.2,
+      architect: 0.3,
       dev: 0.3,
-      sec: 0.3,
       qa: 0.25,
       pm: 0.05,
       buildFailure: 0.4,

@@ -69,23 +69,23 @@ function jsonReply(body: unknown): GenerateResponse {
   };
 }
 
-/** Whether the model's prompt still shows the vulnerable query — false once the fix has landed on disk. */
-function promptShowsVulnerableQuery(req: GenerateRequest): boolean {
+/** Whether the model's prompt still shows the leaked connection — false once the fix has landed on disk. */
+function promptShowsLeakedConnection(req: GenerateRequest): boolean {
   const text = req.messages
     .flatMap((m) => m.parts)
     .filter((p): p is { kind: 'text'; text: string } => p.kind === 'text' && typeof p.text === 'string')
     .map((p) => p.text)
     .join('\n');
-  return text.includes("SELECT * FROM users WHERE id=' + id");
+  return text.includes('LEAK: connection never released');
 }
 
 /**
- * Blocks with a SQL-injection finding on Sec as long as `app.ts` still
- * has the vulnerable query, generates a real fix for it via the
- * editGenerator system prompt, and passes every role once the (content-
- * driven, not call-counted) check shows the fix has actually landed —
- * so `runBreakerBuilderLoop` genuinely resolves, the same way a real
- * model re-scanning fixed code would.
+ * Blocks with a resource-lifecycle finding on Architect as long as
+ * `app.ts` still leaks the connection, generates a real fix for it via
+ * the editGenerator system prompt, and passes every role once the
+ * (content-driven, not call-counted) check shows the fix has actually
+ * landed — so `runBreakerBuilderLoop` genuinely resolves, the same way
+ * a real model re-scanning fixed code would.
  */
 function fixingProvider(): ILLMProvider {
   return {
@@ -94,21 +94,21 @@ function fixingProvider(): ILLMProvider {
       const si = req.systemInstruction ?? '';
       if (si.includes('automated code-fixing assistant')) {
         return jsonReply({
-          oldString: "const q = 'SELECT * FROM users WHERE id=' + id;",
-          newString: 'const q = "fixed";',
-          description: 'Parameterize the query to remove the SQL injection.',
+          oldString: 'return conn.query(id); // LEAK: connection never released',
+          newString: 'try {\n    return conn.query(id);\n  } finally {\n    conn.release();\n  }',
+          description: 'Release the connection in a finally block to fix the leak.',
         });
       }
       const match = si.match(/"role":\s*"(\w+)"/);
       const role = match ? match[1] : 'ba';
-      if (role === 'sec' && promptShowsVulnerableQuery(req)) {
+      if (role === 'architect' && promptShowsLeakedConnection(req)) {
         return jsonReply({
-          role: 'sec',
+          role: 'architect',
           verdict: 'block',
           findings: [
-            { id: 'sec-1', severity: 'critical', file: 'app.ts', lineStart: 1, lineEnd: 1, description: 'SQL injection.' },
+            { id: 'arch-1', severity: 'critical', file: 'app.ts', lineStart: 1, lineEnd: 1, description: 'Database connection is acquired but never released.' },
           ],
-          summary: 'Found a SQL injection vector.',
+          summary: 'Found a resource-lifecycle violation.',
           confidence: 0.95,
         });
       }
@@ -121,12 +121,12 @@ function fixingProvider(): ILLMProvider {
 }
 
 /**
- * Same shape as `fixingProvider()`, except the Sec role's RE-RUN (after
- * its fix has landed — detected the same content-driven way) throws
- * instead of passing, reproducing the reported crash: a real `--fix`
- * run hit a provider error ("400 Param Incorrect") partway through the
- * fix loop, after the batch gate had already been answered and at
- * least one fix already applied.
+ * Same shape as `fixingProvider()`, except the Architect role's RE-RUN
+ * (after its fix has landed — detected the same content-driven way)
+ * throws instead of passing, reproducing the reported crash: a real
+ * `--fix` run hit a provider error ("400 Param Incorrect") partway
+ * through the fix loop, after the batch gate had already been answered
+ * and at least one fix already applied.
  */
 function crashingFixProvider(): ILLMProvider {
   return {
@@ -135,22 +135,22 @@ function crashingFixProvider(): ILLMProvider {
       const si = req.systemInstruction ?? '';
       if (si.includes('automated code-fixing assistant')) {
         return jsonReply({
-          oldString: "const q = 'SELECT * FROM users WHERE id=' + id;",
-          newString: 'const q = "fixed";',
-          description: 'Parameterize the query to remove the SQL injection.',
+          oldString: 'return conn.query(id); // LEAK: connection never released',
+          newString: 'try {\n    return conn.query(id);\n  } finally {\n    conn.release();\n  }',
+          description: 'Release the connection in a finally block to fix the leak.',
         });
       }
       const match = si.match(/"role":\s*"(\w+)"/);
       const role = match ? match[1] : 'ba';
-      if (role === 'sec') {
-        if (promptShowsVulnerableQuery(req)) {
+      if (role === 'architect') {
+        if (promptShowsLeakedConnection(req)) {
           return jsonReply({
-            role: 'sec',
+            role: 'architect',
             verdict: 'block',
             findings: [
-              { id: 'sec-1', severity: 'critical', file: 'app.ts', lineStart: 1, lineEnd: 1, description: 'SQL injection.' },
+              { id: 'arch-1', severity: 'critical', file: 'app.ts', lineStart: 1, lineEnd: 1, description: 'Database connection is acquired but never released.' },
             ],
-            summary: 'Found a SQL injection vector.',
+            summary: 'Found a resource-lifecycle violation.',
             confidence: 0.95,
           });
         }
@@ -169,7 +169,7 @@ describe('runReviewSession — fix loop crash resilience (reported live: a mid-l
   it('still writes the audit trail and the scan report, and still surfaces the original error, when the fix loop crashes mid-run', async () => {
     const git = simpleGit({ baseDir: tmpRoot });
     const appFile = path.join(tmpRoot, 'app.ts');
-    await fs.writeFile(appFile, "const q = 'SELECT * FROM users WHERE id=' + id;\n", 'utf-8');
+    await fs.writeFile(appFile, "const conn = pool.acquire();\nreturn conn.query(id); // LEAK: connection never released\n", 'utf-8');
     await git.add('app.ts');
 
     await expect(
@@ -194,7 +194,7 @@ describe('runReviewSession — fix loop crash resilience (reported live: a mid-l
     const last = entries[entries.length - 1];
     expect(last.type).toBe('resolver_decision');
     if (last.type === 'resolver_decision') {
-      expect(last.decision).toBe('block'); // Sec's pre-fix veto, unchanged
+      expect(last.decision).toBe('block'); // Architect's pre-fix veto, unchanged
     }
 
     // The scan report still got written — this is exactly the reported
@@ -215,7 +215,7 @@ describe('runReviewSession — Phase 9 (post-fix HTML report & audit update)', (
     async () => {
       const git = simpleGit({ baseDir: tmpRoot });
       const appFile = path.join(tmpRoot, 'app.ts');
-      await fs.writeFile(appFile, "const q = 'SELECT * FROM users WHERE id=' + id;\n", 'utf-8');
+      await fs.writeFile(appFile, "const conn = pool.acquire();\nreturn conn.query(id); // LEAK: connection never released\n", 'utf-8');
       await git.add('app.ts');
 
       const result = await runReviewSession({
@@ -230,7 +230,7 @@ describe('runReviewSession — Phase 9 (post-fix HTML report & audit update)', (
       // not a scripted 2nd-call response) — the file on disk changed.
       expect(result.breakerBuilder?.outcome).toBe('resolved');
       expect(result.breakerBuilder?.fixAttempts).toHaveLength(1);
-      expect(await fs.readFile(appFile, 'utf-8')).toContain('"fixed"');
+      expect(await fs.readFile(appFile, 'utf-8')).toContain('conn.release()');
       expect(result.resolver.decision).toBe('approve');
 
       // One fix_attempt audit entry, sharing the run's id, carrying the
@@ -245,8 +245,8 @@ describe('runReviewSession — Phase 9 (post-fix HTML report & audit update)', (
         expect(fixEntry.file).toBe('app.ts');
         expect(fixEntry.fixerStage).toBe('llm');
         expect(fixEntry.iteration).toBe(1);
-        expect(fixEntry.oldString).toContain('SELECT * FROM users');
-        expect(fixEntry.newString).toContain('fixed');
+        expect(fixEntry.oldString).toContain('LEAK: connection never released');
+        expect(fixEntry.newString).toContain('conn.release()');
       }
 
       // Paired fix-<timestamp>.html report, alongside the scan report
@@ -259,14 +259,14 @@ describe('runReviewSession — Phase 9 (post-fix HTML report & audit update)', (
       expect(fixReportHtml).toContain('Codexrev Fix Summary');
       expect(fixReportHtml).toContain('Resolved');
       expect(fixReportHtml).toContain('app.ts');
-      expect(fixReportHtml).toContain('Parameterize the query');
+      expect(fixReportHtml).toContain('Release the connection');
       expect(fixReportHtml).not.toContain('Still Unresolved');
     },
   );
 
   it('does not write a fix report when --fix is not passed, even though the scan itself still blocks', async () => {
     const git = simpleGit({ baseDir: tmpRoot });
-    await fs.writeFile(path.join(tmpRoot, 'app.ts'), "const q = 'SELECT * FROM users WHERE id=' + id;\n", 'utf-8');
+    await fs.writeFile(path.join(tmpRoot, 'app.ts'), "const conn = pool.acquire();\nreturn conn.query(id); // LEAK: connection never released\n", 'utf-8');
     await git.add('app.ts');
 
     const result = await runReviewSession({ cwd: tmpRoot, forceNonInteractive: true, llmOverride: fixingProvider() });

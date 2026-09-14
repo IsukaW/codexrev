@@ -10,8 +10,8 @@ describe('reviewPipeline settings (Feature 2 — Phase 3)', () => {
   it('defaults match the Section 2 authoritative resolver weights', () => {
     expect(DEFAULT_SETTINGS.reviewPipeline.resolverWeights).toEqual({
       ba: 0.2,
+      architect: 0.3,
       dev: 0.3,
-      sec: 0.3,
       qa: 0.15,
       pm: 0.05,
       buildFailure: 0.4,
@@ -48,7 +48,7 @@ describe('reviewPipeline settings (Feature 2 — Phase 3)', () => {
   it('rejects a negative resolver weight', () => {
     expect(() =>
       validateReviewPipelineSettings({
-        resolverWeights: { ba: -0.1, dev: 0.3, sec: 0.3, qa: 0.15, pm: 0.05, buildFailure: 0.4 },
+        resolverWeights: { ba: -0.1, architect: 0.3, dev: 0.3, qa: 0.15, pm: 0.05, buildFailure: 0.4 },
         maxFixIterations: 5,
       }),
     ).toThrow(ConfigError);

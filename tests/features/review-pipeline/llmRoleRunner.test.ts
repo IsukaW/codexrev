@@ -108,7 +108,7 @@ describe('formatPriorContextForPrompt', () => {
 
 describe('roleContractInstructions', () => {
   it('embeds the role id in the JSON contract example', () => {
-    expect(roleContractInstructions('sec')).toContain('"role": "sec"');
+    expect(roleContractInstructions('architect')).toContain('"role": "architect"');
   });
 });
 

@@ -74,7 +74,7 @@ describe('appendAuditEntry', () => {
         rationale: 'all clear',
         appliedRules: [],
         ranRoles: ['ba', 'dev'],
-        skippedRoles: ['build', 'sec', 'qa', 'pm'],
+        skippedRoles: ['build', 'architect', 'qa', 'pm'],
         pipelineOutcome: 'skipped',
       }),
     );
@@ -91,7 +91,7 @@ describe('appendAuditEntry', () => {
     if (entries[3].type === 'resolver_decision') {
       expect(entries[3].decision).toBe('approve');
       expect(entries[3].pipelineOutcome).toBe('skipped');
-      expect(entries[3].skippedRoles).toEqual(['build', 'sec', 'qa', 'pm']);
+      expect(entries[3].skippedRoles).toEqual(['build', 'architect', 'qa', 'pm']);
     }
     // Every entry from this run shares the same id.
     expect(entries.every((e) => e.runId === runId)).toBe(true);
@@ -120,8 +120,8 @@ describe('appendAuditEntry', () => {
 
 const SAMPLE_FIX_ATTEMPT: FixAttemptRecord = {
   iteration: 1,
-  role: 'sec',
-  findingId: 'sec-1',
+  role: 'architect',
+  findingId: 'arch-1',
   file: 'app.ts',
   fixerStage: 'llm',
   description: 'parameterize the query',
@@ -139,8 +139,8 @@ describe('fixAttemptAuditEntry (Phase 9)', () => {
     expect(entry.runId).toBe(runId);
     if (entry.type === 'fix_attempt') {
       expect(entry.iteration).toBe(1);
-      expect(entry.role).toBe('sec');
-      expect(entry.findingId).toBe('sec-1');
+      expect(entry.role).toBe('architect');
+      expect(entry.findingId).toBe('arch-1');
       expect(entry.file).toBe('app.ts');
       expect(entry.fixerStage).toBe('llm');
       expect(entry.oldString).toContain('SELECT * FROM users');
@@ -151,9 +151,9 @@ describe('fixAttemptAuditEntry (Phase 9)', () => {
   it('interleaves correctly with role_verdict and resolver_decision entries, all sharing one runId', async () => {
     const runId = newAuditRunId();
     await appendAuditEntry(tmpRoot, runStartAuditEntry(runId, 'staged'));
-    await appendAuditEntry(tmpRoot, roleVerdictAuditEntry(runId, { ...SAMPLE_ROLE_OUTPUT, role: 'sec', verdict: 'block' }));
+    await appendAuditEntry(tmpRoot, roleVerdictAuditEntry(runId, { ...SAMPLE_ROLE_OUTPUT, role: 'architect', verdict: 'block' }));
     await appendAuditEntry(tmpRoot, fixAttemptAuditEntry(runId, SAMPLE_FIX_ATTEMPT));
-    await appendAuditEntry(tmpRoot, fixAttemptAuditEntry(runId, { ...SAMPLE_FIX_ATTEMPT, iteration: 2, findingId: 'sec-2' }));
+    await appendAuditEntry(tmpRoot, fixAttemptAuditEntry(runId, { ...SAMPLE_FIX_ATTEMPT, iteration: 2, findingId: 'arch-2' }));
     await appendAuditEntry(
       tmpRoot,
       resolverDecisionAuditEntry(runId, {
@@ -161,7 +161,7 @@ describe('fixAttemptAuditEntry (Phase 9)', () => {
         score: 0,
         rationale: 'fixed',
         appliedRules: [],
-        ranRoles: ['sec'],
+        ranRoles: ['architect'],
         skippedRoles: [],
         pipelineOutcome: 'completed',
       }),
@@ -194,7 +194,7 @@ describe('groupAuditLogByRun — solves "the log keeps growing, where does each 
         rationale: 'r1',
         appliedRules: [],
         ranRoles: ['ba'],
-        skippedRoles: ['dev', 'build', 'sec', 'qa', 'pm'],
+        skippedRoles: ['dev', 'build', 'architect', 'qa', 'pm'],
         pipelineOutcome: 'skipped',
       }),
     );

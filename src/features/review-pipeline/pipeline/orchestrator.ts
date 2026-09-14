@@ -7,9 +7,9 @@
 
 import { ROLE_LABELS, ROLE_ORDER, type RoleId, type RoleOutput } from '../roles/roleContract.js';
 import { runBaRole } from '../roles/ba.js';
+import { runArchitectRole } from '../roles/architect.js';
 import { runDevRole } from '../roles/dev.js';
 import { runBuildRole } from '../roles/build.js';
-import { runSecRole } from '../roles/sec.js';
 import { runQaRole } from '../roles/qa.js';
 import { runPmRole } from '../roles/pm.js';
 import { ContextAggregator } from './contextAggregator.js';
@@ -21,9 +21,9 @@ import { InteractionChannel } from '../../../core/interaction.js';
 // exported so breakerBuilderLoop.ts can re-run individual roles without its own copy of this map
 export const ROLE_RUNNERS: Readonly<Record<RoleId, (ctx: RoleRunContext) => Promise<RoleOutput>>> = {
   ba: runBaRole,
+  architect: runArchitectRole,
   dev: runDevRole,
   build: runBuildRole,
-  sec: runSecRole,
   qa: runQaRole,
   pm: runPmRole,
 };

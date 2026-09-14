@@ -3,7 +3,7 @@
  *
  * Phase 10's "New" bullet 2: "Integration tests: run the full pipeline
  * against small synthetic diffs with known injected issues (SQL
- * injection, buffer overflow, off-by-one), confirming the Sec/QA roles
+ * injection, buffer overflow, off-by-one), confirming the Architect/QA roles
  * catch them." That is a genuinely different kind of test from
  * everything else in this suite — every other test here uses a fake
  * `ILLMProvider` that scripts its own response, which proves the

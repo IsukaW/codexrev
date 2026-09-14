@@ -270,8 +270,9 @@ async function requestCorrectiveJson(
 }
 
 // calls the model for one LLM role and returns a validated RoleOutput.
-// roleSystemPrompt is that role's own lens (e.g. Sec's OWASP/CVSS framing);
-// this appends the shared contract instructions and runs the tool loop.
+// roleSystemPrompt is that role's own lens (e.g. Architect's boundary/
+// resource-lifecycle framing); this appends the shared contract
+// instructions and runs the tool loop.
 export async function runLlmRole(
   role: RoleId,
   roleSystemPrompt: string,

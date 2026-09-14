@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { runBaRole } from '../../../../src/features/review-pipeline/roles/ba.js';
 import { runDevRole } from '../../../../src/features/review-pipeline/roles/dev.js';
-import { runSecRole } from '../../../../src/features/review-pipeline/roles/sec.js';
+import { runArchitectRole } from '../../../../src/features/review-pipeline/roles/architect.js';
 import { runQaRole } from '../../../../src/features/review-pipeline/roles/qa.js';
 import { runPmRole } from '../../../../src/features/review-pipeline/roles/pm.js';
 import { ContextAggregator } from '../../../../src/features/review-pipeline/pipeline/contextAggregator.js';
@@ -68,12 +68,12 @@ describe('role lenses stay distinct and each role tags its own JSON contract', (
     expect(captured.req?.systemInstruction).toMatch(/correctness/i);
   });
 
-  it('sec: OWASP/CWE lens', async () => {
+  it('architect: architectural-fit lens', async () => {
     const captured: { req?: GenerateRequest } = {};
-    const out = await runSecRole(makeCtx(capturingProvider('sec', captured)));
-    expect(out.role).toBe('sec');
-    expect(captured.req?.systemInstruction).toMatch(/OWASP/);
-    expect(captured.req?.systemInstruction).toMatch(/CWE/);
+    const out = await runArchitectRole(makeCtx(capturingProvider('architect', captured)));
+    expect(out.role).toBe('architect');
+    expect(captured.req?.systemInstruction).toMatch(/Architect/);
+    expect(captured.req?.systemInstruction).toMatch(/architectural fit/i);
   });
 
   it('qa: adversarial / mutation-testing lens', async () => {

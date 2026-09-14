@@ -11,43 +11,44 @@ import {
 } from '../../../src/features/review-pipeline/roles/roleContract.js';
 
 // A hand-written sample role output — as if freshly JSON.parse'd from the
-// Sec role's LLM response. This is the Phase 3 Definition of Done: proving
-// a realistic sample validates cleanly against roleContract.ts.
-const SAMPLE_SEC_OUTPUT = {
-  role: 'sec',
+// Architect role's LLM response. This is the Phase 3 Definition of Done:
+// proving a realistic sample validates cleanly against roleContract.ts.
+const SAMPLE_ARCHITECT_OUTPUT = {
+  role: 'architect',
   verdict: 'block',
   findings: [
     {
-      id: 'sec-1',
+      id: 'arch-1',
       severity: 'high',
-      cwe: 'CWE-89',
       file: 'src/api/users.ts',
       lineStart: 42,
       lineEnd: 44,
-      description: 'User-supplied `id` is concatenated directly into a SQL query, allowing SQL injection.',
-      suggestedFix: 'Use a parameterized query instead of string concatenation.',
+      description: 'A frontend module imports the database client directly, crossing the service boundary.',
+      suggestedFix: 'Move the query behind the existing API layer instead of importing the DB client in the frontend.',
     },
     {
-      id: 'sec-2',
+      id: 'arch-2',
       severity: 'medium',
       file: 'src/api/users.ts',
       lineStart: 51,
       lineEnd: 51,
-      description: 'Error message leaks the internal stack trace to the client.',
+      description: 'Database connection acquired in the request handler is never released on the error path.',
     },
   ],
-  summary: 'Found one SQL injection vector and one information-disclosure issue in the users endpoint.',
+  summary: 'Found one service-boundary violation and one resource-lifecycle issue in the users endpoint.',
   confidence: 0.86,
 };
 
 describe('roleContract — validateRoleOutput', () => {
   it('accepts a realistic hand-written sample role output', () => {
-    const parsed: RoleOutput = validateRoleOutput(SAMPLE_SEC_OUTPUT);
-    expect(parsed.role).toBe('sec');
+    const parsed: RoleOutput = validateRoleOutput(SAMPLE_ARCHITECT_OUTPUT);
+    expect(parsed.role).toBe('architect');
     expect(parsed.verdict).toBe('block');
     expect(parsed.findings).toHaveLength(2);
-    expect(parsed.findings[0].cwe).toBe('CWE-89');
-    expect(parsed.findings[1].cwe).toBeUndefined();
+    expect(parsed.findings[0].suggestedFix).toBe(
+      'Move the query behind the existing API layer instead of importing the DB client in the frontend.',
+    );
+    expect(parsed.findings[1].suggestedFix).toBeUndefined();
     expect(parsed.summary.length).toBeGreaterThan(0);
     expect(parsed.confidence).toBeCloseTo(0.86);
   });
@@ -60,48 +61,48 @@ describe('roleContract — validateRoleOutput', () => {
   it.each([
     ['not an object', 'nope'],
     ['missing role', { verdict: 'pass', findings: [], summary: 's', confidence: 0.5 }],
-    ['unknown role', { ...SAMPLE_SEC_OUTPUT, role: 'ceo' }],
-    ['unknown verdict', { ...SAMPLE_SEC_OUTPUT, verdict: 'maybe' }],
-    ['findings not an array', { ...SAMPLE_SEC_OUTPUT, findings: {} }],
-    ['empty summary', { ...SAMPLE_SEC_OUTPUT, summary: '' }],
-    ['confidence out of range', { ...SAMPLE_SEC_OUTPUT, confidence: 1.5 }],
-    ['confidence not a number', { ...SAMPLE_SEC_OUTPUT, confidence: 'high' }],
+    ['unknown role', { ...SAMPLE_ARCHITECT_OUTPUT, role: 'ceo' }],
+    ['unknown verdict', { ...SAMPLE_ARCHITECT_OUTPUT, verdict: 'maybe' }],
+    ['findings not an array', { ...SAMPLE_ARCHITECT_OUTPUT, findings: {} }],
+    ['empty summary', { ...SAMPLE_ARCHITECT_OUTPUT, summary: '' }],
+    ['confidence out of range', { ...SAMPLE_ARCHITECT_OUTPUT, confidence: 1.5 }],
+    ['confidence not a number', { ...SAMPLE_ARCHITECT_OUTPUT, confidence: 'high' }],
   ])('rejects: %s', (_label, bad) => {
     expect(() => validateRoleOutput(bad)).toThrow(RoleContractError);
   });
 
   it('rejects a finding with an invalid severity, naming the exact path', () => {
     const bad = {
-      ...SAMPLE_SEC_OUTPUT,
-      findings: [{ ...SAMPLE_SEC_OUTPUT.findings[0], severity: 'catastrophic' }],
+      ...SAMPLE_ARCHITECT_OUTPUT,
+      findings: [{ ...SAMPLE_ARCHITECT_OUTPUT.findings[0], severity: 'catastrophic' }],
     };
     expect(() => validateRoleOutput(bad)).toThrow(/\$\.findings\[0\]\.severity/);
   });
 
   it('rejects a finding where lineEnd < lineStart', () => {
-    const bad = { ...SAMPLE_SEC_OUTPUT, findings: [{ ...SAMPLE_SEC_OUTPUT.findings[0], lineEnd: 1 }] };
+    const bad = { ...SAMPLE_ARCHITECT_OUTPUT, findings: [{ ...SAMPLE_ARCHITECT_OUTPUT.findings[0], lineEnd: 1 }] };
     expect(() => validateRoleOutput(bad)).toThrow(RoleContractError);
   });
 });
 
 describe('roleContract — validateFinding', () => {
   it('validates one finding in isolation', () => {
-    const f = validateFinding(SAMPLE_SEC_OUTPUT.findings[0], '$');
-    expect(f.id).toBe('sec-1');
+    const f = validateFinding(SAMPLE_ARCHITECT_OUTPUT.findings[0], '$');
+    expect(f.id).toBe('arch-1');
     expect(f.severity).toBe('high');
   });
 });
 
 describe('roleContract — role identity & ordering', () => {
-  it('ROLE_ORDER is BA → Dev → Build → Sec → QA → PM, per Section 2', () => {
-    expect(ROLE_ORDER).toEqual(['ba', 'dev', 'build', 'sec', 'qa', 'pm']);
+  it('ROLE_ORDER is BA → Architect → Dev → Build → QA → PM', () => {
+    expect(ROLE_ORDER).toEqual(['ba', 'architect', 'dev', 'build', 'qa', 'pm']);
   });
 
   it('ROLE_LABELS has plain-English names for every role', () => {
     expect(ROLE_LABELS.ba).toBe('Business Analyst');
+    expect(ROLE_LABELS.architect).toBe('Architect');
     expect(ROLE_LABELS.dev).toBe('Developer');
     expect(ROLE_LABELS.build).toBe('Build Analyst');
-    expect(ROLE_LABELS.sec).toBe('Security Auditor');
     expect(ROLE_LABELS.qa).toBe('QA Engineer');
     expect(ROLE_LABELS.pm).toBe('Director of Engineering');
   });

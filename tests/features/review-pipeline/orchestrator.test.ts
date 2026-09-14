@@ -16,7 +16,7 @@ const EMPTY_DIFF: ParsedDiff = { ref: 'staged', raw: '', files: [] };
  * (every role's system prompt embeds `"role": "<id>"` via
  * `roleContractInstructions()`) and replies with a valid pass verdict
  * for that exact role. This lets the orchestrator test exercise the
- * real `ba.ts`/`dev.ts`/`sec.ts`/`qa.ts`/`pm.ts` role files end to end,
+ * real `ba.ts`/`architect.ts`/`dev.ts`/`qa.ts`/`pm.ts` role files end to end,
  * matching this repo's existing "no module mocking" test convention.
  */
 function echoRoleProvider(): ILLMProvider {
@@ -120,15 +120,16 @@ describe('runPipeline — a role throwing', () => {
 
   it('keeps roles that completed before the failure', async () => {
     // Build never calls the LLM (it's deterministic), so with an empty
-    // diff / no build markers the call order is: ba (1st LLM call), dev
-    // (2nd), build (no LLM call), sec (3rd LLM call) — throwing on the
-    // 3rd call fails Sec, leaving ba/dev/build as already completed.
+    // diff / no build markers the call order is: ba (1st LLM call),
+    // architect (2nd), dev (3rd), build (no LLM call), qa (4th LLM call)
+    // — throwing on the 4th call fails QA, leaving ba/architect/dev/build
+    // as already completed.
     let calls = 0;
     const flakyLlm: ILLMProvider = {
       id: 'openai',
       generate: async (req: GenerateRequest) => {
         calls++;
-        if (calls > 2) throw new Error('boom on the third LLM call (Sec)');
+        if (calls > 3) throw new Error('boom on the fourth LLM call (QA)');
         const match = (req.systemInstruction ?? '').match(/"role":\s*"(\w+)"/);
         const role = match ? match[1] : 'ba';
         return {
@@ -148,9 +149,9 @@ describe('runPipeline — a role throwing', () => {
     const result = await runPipeline({ diff: EMPTY_DIFF, llm: flakyLlm, model: 'test-model', cwd: tmpRoot });
 
     expect(result.outcome).toBe('errored');
-    expect(result.ranRoles).toEqual(['ba', 'dev', 'build']);
-    expect(result.skippedRoles).toEqual(['sec', 'qa', 'pm']);
-    expect(result.aggregator.completedRoles).toEqual(['ba', 'dev', 'build']);
+    expect(result.ranRoles).toEqual(['ba', 'architect', 'dev', 'build']);
+    expect(result.skippedRoles).toEqual(['qa', 'pm']);
+    expect(result.aggregator.completedRoles).toEqual(['ba', 'architect', 'dev', 'build']);
   });
 });
 
@@ -193,8 +194,8 @@ describe('runPipeline — interactive gates', () => {
     });
 
     expect(result.outcome).toBe('skipped');
-    expect(result.ranRoles).toEqual(['ba', 'dev']);
-    expect(result.skippedRoles).toEqual(['build', 'sec', 'qa', 'pm']);
+    expect(result.ranRoles).toEqual(['ba', 'architect', 'dev']);
+    expect(result.skippedRoles).toEqual(['build', 'qa', 'pm']);
   });
 
   it('stops immediately after "abort"', async () => {
@@ -214,7 +215,7 @@ describe('runPipeline — interactive gates', () => {
 
     expect(result.outcome).toBe('aborted');
     expect(result.ranRoles).toEqual(['ba']);
-    expect(result.skippedRoles).toEqual(['dev', 'build', 'sec', 'qa', 'pm']);
+    expect(result.skippedRoles).toEqual(['architect', 'dev', 'build', 'qa', 'pm']);
   });
 
   it('"details" re-prompts the same gate instead of advancing', async () => {

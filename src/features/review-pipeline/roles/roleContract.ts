@@ -1,4 +1,4 @@
-// Shared JSON shape all six roles emit (ba/dev/build/sec/qa/pm). ContextAggregator
+// Shared JSON shape all six roles emit (ba/architect/dev/build/qa/pm). ContextAggregator
 // collects one RoleOutput per role, ResolverEngine reads all six for the final
 // decision, reportRenderer turns Finding[] into the per-role report sections.
 //
@@ -9,17 +9,17 @@
 
 import { CodexrevError } from '../../../utils/errors.js';
 
-// also doubles as each role's file stem under roles/ (ba.ts, dev.ts, ...)
-export type RoleId = 'ba' | 'dev' | 'build' | 'sec' | 'qa' | 'pm';
+// also doubles as each role's file stem under roles/ (ba.ts, architect.ts, ...)
+export type RoleId = 'ba' | 'architect' | 'dev' | 'build' | 'qa' | 'pm';
 
 /** Fixed execution order, always sequential. */
-export const ROLE_ORDER: readonly RoleId[] = ['ba', 'dev', 'build', 'sec', 'qa', 'pm'];
+export const ROLE_ORDER: readonly RoleId[] = ['ba', 'architect', 'dev', 'build', 'qa', 'pm'];
 
 export const ROLE_LABELS: Readonly<Record<RoleId, string>> = {
   ba: 'Business Analyst',
+  architect: 'Architect',
   dev: 'Developer',
   build: 'Build Analyst',
-  sec: 'Security Auditor',
   qa: 'QA Engineer',
   pm: 'Director of Engineering',
 };
@@ -45,9 +45,9 @@ export function bumpSeverity(sev: Severity): Severity {
 
 /** One issue raised by a role — also what the change-coverage map keys off (file + line range -> verdict). */
 export interface Finding {
-  readonly id: string; // unique within one role's output, e.g. "sec-1"
+  readonly id: string; // unique within one role's output, e.g. "arch-1"
   readonly severity: Severity;
-  readonly cwe?: string; // CWE ref like "CWE-89", mostly used by Sec
+  readonly cwe?: string; // CWE ref like "CWE-89", set by roles doing security-flavored analysis (Feature 4 scores this independently now, no in-pipeline role owns it)
   readonly file: string;
   readonly lineStart: number;
   readonly lineEnd: number;

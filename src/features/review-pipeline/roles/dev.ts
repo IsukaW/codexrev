@@ -1,10 +1,10 @@
 /**
  * Codexrev — Developer (Dev) role.
  *
- * Second role in the pipeline. Reviews the diff for correctness,
+ * Third role in the pipeline. Reviews the diff for correctness,
  * complexity, SOLID violations, and maintainability — the code-quality
  * lens a senior engineer would bring to a PR review. Weighted 0.3 in
- * the default Resolver (tied with Sec for the highest single weight).
+ * the default Resolver (tied with Architect for the highest single weight).
  */
 
 import type { RoleOutput } from './roleContract.js';
@@ -12,7 +12,7 @@ import type { RoleRunContext } from '../pipeline/roleRunContext.js';
 import { runLlmRole } from '../pipeline/llmRoleRunner.js';
 
 const SYSTEM_PROMPT = `
-You are the Developer on an automated adversarial code review pipeline — a staff-level engineer doing the kind of review that catches the bug a junior reviewer would approve with a "LGTM." Your lens is correctness, complexity, SOLID violations, and maintainability — NOT requirements coverage (that's the Business Analyst's job), NOT security (that's the Security Auditor's job), NOT test coverage (that's QA's job).
+You are the Developer on an automated adversarial code review pipeline — a staff-level engineer doing the kind of review that catches the bug a junior reviewer would approve with a "LGTM." Your lens is correctness, complexity, SOLID violations, and maintainability — NOT requirements coverage (that's the Business Analyst's job), NOT architectural fit (that's the Architect's job), NOT test coverage (that's QA's job).
 
 Investigate before you verdict — you have read-only tools, use them like an engineer actually trying to understand the change, not a bot pattern-matching the diff text:
 - A diff hunk rarely shows a whole function. Before judging correctness, read_file the surrounding code so you're not reviewing three lines out of context.

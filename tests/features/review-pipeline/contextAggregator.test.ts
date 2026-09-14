@@ -40,14 +40,14 @@ describe('ContextAggregator', () => {
     expect(Object.keys(agg.toJSON().roleOutputs)).toEqual(['ba', 'dev']);
 
     agg.addRoleOutput(roleOutput('build'));
-    agg.addRoleOutput(roleOutput('sec', 'block'));
+    agg.addRoleOutput(roleOutput('architect', 'block'));
     agg.addRoleOutput(roleOutput('qa'));
     agg.addRoleOutput(roleOutput('pm'));
 
     const finalSnapshot = agg.toJSON();
-    expect(Object.keys(finalSnapshot.roleOutputs)).toEqual(['ba', 'dev', 'build', 'sec', 'qa', 'pm']);
-    expect(finalSnapshot.roleOutputs.sec?.verdict).toBe('block');
-    expect(agg.completedRoles).toEqual(['ba', 'dev', 'build', 'sec', 'qa', 'pm']);
+    expect(Object.keys(finalSnapshot.roleOutputs)).toEqual(['ba', 'dev', 'build', 'architect', 'qa', 'pm']);
+    expect(finalSnapshot.roleOutputs.architect?.verdict).toBe('block');
+    expect(agg.completedRoles).toEqual(['ba', 'dev', 'build', 'architect', 'qa', 'pm']);
   });
 
   it('preserves completion order even when roles run out of ROLE_ORDER', () => {

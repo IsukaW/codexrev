@@ -2,8 +2,12 @@
 // using weighted scoring (weights configurable via settings.reviewPipeline.resolverWeights)
 // plus two conflict rules:
 //
-// - Sec always wins on exploitability: if Sec's own verdict is 'block', final
-//   decision is forced to Block no matter what the weighted score says.
+// - Architect always wins on architectural integrity: if Architect's own verdict
+//   is 'block', final decision is forced to Block no matter what the weighted
+//   score says. This fires because a role's own judgement that a change breaks
+//   the system's architectural integrity (a boundary crossed, a resource leaked,
+//   a sensitive-data flow that shouldn't exist) shouldn't be out-voted by an
+//   average across roles that weren't looking at that lens at all.
 // - BA + QA flagging the same spot independently counts as corroboration —
 //   bump both findings' severity one level. If that bump reaches critical,
 //   the decision floor goes up to at least Request Changes.
@@ -42,7 +46,7 @@ export interface ResolvedFinding extends Finding {
 
 // a conflict rule that fired during resolution, kept for the audit trail / report
 export interface ConflictRuleApplication {
-  readonly rule: 'sec-exploitability-veto' | 'ba-qa-overlap-severity-bump';
+  readonly rule: 'architect-integrity-veto' | 'ba-qa-overlap-severity-bump';
   readonly description: string;
   readonly affectedFindingIds: readonly string[];
 }
@@ -67,8 +71,8 @@ const SEVERITY_POINTS: Readonly<Record<Severity, number>> = {
   critical: 1.0,
 };
 
-// BA/Dev/Sec/QA/PM share the configurable weight split; Build is scored separately below
-const WEIGHTED_ROLES: readonly RoleId[] = ['ba', 'dev', 'sec', 'qa', 'pm'];
+// BA/Architect/Dev/QA/PM share the configurable weight split; Build is scored separately below
+const WEIGHTED_ROLES: readonly RoleId[] = ['ba', 'architect', 'dev', 'qa', 'pm'];
 
 function maxFindingSeverityPoints(findings: readonly Finding[]): number {
   if (findings.length === 0) return 0;
@@ -194,14 +198,14 @@ export function resolve(
 
   const appliedRules: ConflictRuleApplication[] = [];
 
-  // Sec always wins on exploitability
-  const secOutput = roleOutputs.sec;
-  if (secOutput?.verdict === 'block') {
+  // Architect always wins on architectural integrity
+  const architectOutput = roleOutputs.architect;
+  if (architectOutput?.verdict === 'block') {
     decision = atLeast(decision, 'block');
     appliedRules.push({
-      rule: 'sec-exploitability-veto',
-      description: 'Security Auditor found an exploitable issue — this forces Block regardless of the weighted score.',
-      affectedFindingIds: secOutput.findings.map((f) => f.id),
+      rule: 'architect-integrity-veto',
+      description: 'Architect found an architectural-integrity violation — this forces Block regardless of the weighted score.',
+      affectedFindingIds: architectOutput.findings.map((f) => f.id),
     });
   }
 
@@ -217,7 +221,7 @@ export function resolve(
     }
   }
 
-  const missingRoles = (['ba', 'dev', 'build', 'sec', 'qa', 'pm'] as const).filter((r) => !roleOutputs[r]);
+  const missingRoles = (['ba', 'architect', 'dev', 'build', 'qa', 'pm'] as const).filter((r) => !roleOutputs[r]);
 
   const rationale = buildRationale(decision, score, roleOutputs, appliedRules, missingRoles);
 
@@ -242,7 +246,7 @@ function buildRationale(
   const parts: string[] = [];
   parts.push(`Final decision: ${RESOLVER_DECISION_LABELS[decision]} (risk score ${score.toFixed(2)}).`);
 
-  const verdictSummary = (['ba', 'dev', 'build', 'sec', 'qa', 'pm'] as const)
+  const verdictSummary = (['ba', 'architect', 'dev', 'build', 'qa', 'pm'] as const)
     .map((role) => {
       const output = roleOutputs[role];
       return output ? `${ROLE_LABELS[role]}: ${output.verdict}` : `${ROLE_LABELS[role]}: did not run`;

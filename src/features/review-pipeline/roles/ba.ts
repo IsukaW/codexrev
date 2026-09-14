@@ -1,4 +1,4 @@
-// Business Analyst role — first in the pipeline (BA -> Dev -> Build -> Sec -> QA -> PM).
+// Business Analyst role — first in the pipeline (BA -> Architect -> Dev -> Build -> QA -> PM).
 // Reads the diff against the URS (when given via --urs) and flags behavioral
 // drift: changes that don't map to a stated requirement, or requirements the
 // diff only half-implements. Weighted 0.2 in the default resolver.
