@@ -47,8 +47,14 @@ export async function loadProjectConfig(projectRoot: string): Promise<ProjectCon
         `unsupported project config schemaVersion: ${parsed.schemaVersion} (expected ${PROJECT_CONFIG_SCHEMA_VERSION}). Re-run \`codexrev init --reset\`.`,
       );
     }
-    if (!parsed.provider || !parsed.model || !parsed.apiKey) {
+    if (!parsed.provider || !parsed.model) {
       throw new ConfigError(`project config at ${file} is missing required fields.`);
+    }
+    const hasRegistry = Array.isArray(parsed.providers) && parsed.providers.length > 0;
+    if (!parsed.apiKey && !hasRegistry) {
+      throw new ConfigError(
+        `project config at ${file} has no API key and no providers[] registry. Re-run \`codexrev init --reset\`.`,
+      );
     }
     return parsed;
   } catch (err) {

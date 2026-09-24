@@ -1,20 +1,14 @@
-/**
- * Codexrev — built-in tool implementations.
- *
- * Exports `builtinTools(settings)` which returns a list of fully
- * implemented `Tool` objects. The model can call any of these.
- */
+// builtinTools(settings) returns the fully implemented Tool objects the model can call.
 
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { glob } from 'glob';
 import { htmlToText } from 'html-to-text';
 import { ToolError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
-import type { Tool } from './registry.js';
+import type { Tool, ToolContext } from './registry.js';
 import type { Settings } from '../config/schema.js';
+import { SandboxManager } from '../sandbox/index.js';
 import {
   FileReadTool,
   FileWriteTool,
@@ -27,7 +21,11 @@ import {
 } from './specs.js';
 import type { ToolDeclaration } from '../core/types.js';
 
-const execFileP = promisify(execFile);
+// goes through ctx.ask if it's wired up; otherwise there's no gate, so just allow it
+async function approved(ctx: ToolContext, toolName: string, args: unknown): Promise<boolean> {
+  if (!ctx.ask) return true;
+  return ctx.ask(toolName, args);
+}
 
 export type BuiltinToolName =
   | 'shell'
@@ -73,6 +71,9 @@ const writeFileImpl: Tool = {
     const { file_path, content } = (args ?? {}) as { file_path: string; content: string };
     if (!file_path) throw new ToolError('write_file', 'file_path is required');
     if (typeof content !== 'string') throw new ToolError('write_file', 'content must be a string');
+    if (!(await approved(ctx, 'write_file', { file_path }))) {
+      return { output: 'denied by user', isError: true };
+    }
     const full = path.isAbsolute(file_path) ? file_path : path.join(ctx.cwd, file_path);
     await fs.mkdir(path.dirname(full), { recursive: true });
     await fs.writeFile(full, content, 'utf-8');
@@ -96,6 +97,9 @@ const editImpl: Tool = {
     if (typeof old_string !== 'string' || typeof new_string !== 'string') {
       throw new ToolError('edit', 'old_string and new_string are required');
     }
+    if (!(await approved(ctx, 'edit', { file_path }))) {
+      return { output: 'denied by user', isError: true };
+    }
     const full = path.isAbsolute(file_path) ? file_path : path.join(ctx.cwd, file_path);
     const orig = await fs.readFile(full, 'utf-8');
     if (!orig.includes(old_string)) {
@@ -109,39 +113,48 @@ const editImpl: Tool = {
   },
 };
 
-const shellImpl: Tool = {
-  name: ShellTool.name,
-  description: ShellTool.description,
-  parameters: ShellTool.parameters,
-  declaration: makeDeclaration(ShellTool.name, ShellTool.description, ShellTool.parameters),
-  async execute(args, ctx) {
-    const { command, timeout } = (args ?? {}) as { command: string; timeout?: number };
-    if (!command) throw new ToolError('shell', 'command is required');
-    if (ctx.ask) {
-      const ok = await ctx.ask('shell', { command });
-      if (!ok) return { output: 'denied by user', isError: true };
-    }
-    logger.debug('executing shell command', { command, cwd: ctx.cwd });
-    try {
+// Every command goes through the configured SandboxManager; metadata (sandbox,
+// durationMs, exitCode) comes back so the TUI can render live execution cards.
+function makeShellTool(sandbox: SandboxManager): Tool {
+  return {
+    name: ShellTool.name,
+    description: ShellTool.description,
+    parameters: ShellTool.parameters,
+    declaration: makeDeclaration(ShellTool.name, ShellTool.description, ShellTool.parameters),
+    async execute(args, ctx) {
+      const { command, timeout } = (args ?? {}) as { command: string; timeout?: number };
+      if (!command) throw new ToolError('shell', 'command is required');
+      if (!(await approved(ctx, 'shell', { command }))) {
+        return { output: 'denied by user', isError: true };
+      }
+      logger.debug('executing shell command', { command, cwd: ctx.cwd });
       const isWin = process.platform === 'win32';
-      const shellBin = isWin ? 'cmd.exe' : '/bin/sh';
-      const shellFlag = isWin ? '/c' : '-c';
-      const { stdout, stderr } = await execFileP(shellBin, [shellFlag, command], {
-        cwd: ctx.cwd,
-        timeout: timeout ?? 30_000,
-        maxBuffer: 8 * 1024 * 1024,
-      });
-      return { output: [stdout, stderr].filter(Boolean).join('\n') };
-    } catch (err) {
-      const e = err as { stdout?: string; stderr?: string; message?: string };
-      const out = [e.stdout, e.stderr].filter(Boolean).join('\n');
-      return {
-        output: out || (e.message ?? 'shell command failed'),
-        isError: true,
-      };
-    }
-  },
-};
+      const argv = isWin ? ['cmd.exe', '/c', command] : ['/bin/sh', '-c', command];
+      try {
+        const r = await sandbox.exec(argv, { cwd: ctx.cwd, timeoutMs: timeout ?? 30_000 });
+        const output = [r.stdout, r.stderr].filter(Boolean).join('\n');
+        return {
+          output: output || `(no output — exit ${r.exitCode})`,
+          isError: r.exitCode !== 0,
+          metadata: {
+            sandbox: r.sandboxedBy,
+            durationMs: r.durationMs,
+            exitCode: r.exitCode,
+            command,
+          },
+        };
+      } catch (err) {
+        const e = err as { stdout?: string; stderr?: string; message?: string };
+        const out = [e.stdout, e.stderr].filter(Boolean).join('\n');
+        return {
+          output: out || (e.message ?? 'shell command failed'),
+          isError: true,
+          metadata: { sandbox: sandbox.getMode(), command, error: e.message },
+        };
+      }
+    },
+  };
+}
 
 const globImpl: Tool = {
   name: GlobTool.name,
@@ -219,7 +232,7 @@ const webSearchImpl: Tool = {
   async execute(args) {
     const { query } = (args ?? {}) as { query: string; num_results?: number };
     if (!query) throw new ToolError('web_search', 'query is required');
-    // Use DuckDuckGo HTML endpoint as a free, no-key fallback.
+    // DuckDuckGo's HTML endpoint — free, no API key needed
     const u = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
     const res = await fetch(u, { headers: { 'User-Agent': 'codexrev/0.1' } });
     if (!res.ok) return { output: `HTTP ${res.status}`, isError: true };
@@ -229,17 +242,21 @@ const webSearchImpl: Tool = {
   },
 };
 
-const BUILTINS: Tool[] = [
-  shellImpl,
-  readFileImpl,
-  writeFileImpl,
-  editImpl,
-  globImpl,
-  grepImpl,
-  webFetchImpl,
-  webSearchImpl,
-];
+export interface BuiltinToolDeps {
+  /** shared so a live Control Panel mode change actually takes effect */
+  sandbox?: SandboxManager;
+}
 
-export function builtinTools(_settings?: Settings): Tool[] {
-  return BUILTINS.slice();
+export function builtinTools(settings?: Settings, deps: BuiltinToolDeps = {}): Tool[] {
+  const sandbox = deps.sandbox ?? new SandboxManager(settings?.sandbox ?? 'auto');
+  return [
+    makeShellTool(sandbox),
+    readFileImpl,
+    writeFileImpl,
+    editImpl,
+    globImpl,
+    grepImpl,
+    webFetchImpl,
+    webSearchImpl,
+  ];
 }

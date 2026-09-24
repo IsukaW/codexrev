@@ -1,15 +1,6 @@
-/**
- * Codexrev — fix-check-confirm loop.
- *
- * Orchestrates the pipeline (Committee → Breaker-Builder → Resolver)
- * with automatic retry on verification failure. Each iteration:
- *
- *   1. Run the pipeline.
- *   2. If green → done.
- *   3. If red AND attempts remaining → show status, ask user to continue/stop.
- *   4. If user continues → re-run Breaker-Builder + Resolver with error context.
- *   5. If user stops or max attempts reached → keep last-applied state.
- */
+// Fix-check-confirm loop: runs the pipeline (Committee -> Breaker-Builder -> Resolver)
+// and retries automatically when verification fails. On red, we ask the user whether
+// to keep going or bail with whatever's already applied.
 
 import type { ContentGenerator } from './types.js';
 import type { AgentEvent } from './turn.js';
@@ -33,7 +24,7 @@ export interface FixLoopOptions {
   maxFixAttempts?: number;
   verificationMode?: VerificationMode;
   signal?: AbortSignal;
-  /** Prior conversation context (e.g. from Plan mode). */
+  /** prior context, e.g. carried over from Plan mode */
   contextMessages?: Message[];
 }
 
@@ -56,11 +47,7 @@ const BREAKER_BUILDER_RETRY_PROMPT = [
   '5. If something is unclear, call ask_user for clarification.',
 ].join('\n');
 
-/**
- * Run the fix-check-confirm loop.
- *
- * This is the top-level entry point for Agent mode.
- */
+// Top-level entry point for Agent mode.
 export async function* runFixLoop(
   opts: FixLoopOptions,
 ): AsyncGenerator<AgentEvent, FixLoopResult> {
@@ -72,7 +59,7 @@ export async function* runFixLoop(
   let lastResult: PipelineResult | null = null;
   let previousErrors = '';
 
-  // ── First pass: full pipeline ─────────────────────────────────
+  // first pass: full pipeline
   attempts = 1;
   const pipelineOpts: PipelineOptions = {
     prompt: opts.prompt,
@@ -86,16 +73,11 @@ export async function* runFixLoop(
   };
 
   for await (const ev of runPipeline(pipelineOpts)) {
-    // Forward pipeline events to the UI
     yield ev;
-    // Collect the result from the generator return value
-    // (handled below after the loop)
   }
 
-  // The pipeline generator returns a PipelineResult.
-  // We need to re-run to capture the return value since
-  // for-await only gives us the yielded events.
-  // Instead, let's run the pipeline differently.
+  // for-await only gives us yielded events, not the generator's return value,
+  // so run it again through the delegating wrapper to actually get the result
   lastResult = yield* runPipelineWithResult(pipelineOpts);
 
   yield {
@@ -114,9 +96,8 @@ export async function* runFixLoop(
 
   previousErrors = lastResult.verification;
 
-  // ── Retry loop ────────────────────────────────────────────────
+  // retry loop
   while (attempts < maxAttempts) {
-    // Ask user: continue or stop?
     const decision = await interactionChannel.requestFixConfirmation(
       attempts,
       maxAttempts,
@@ -131,7 +112,7 @@ export async function* runFixLoop(
 
     attempts++;
 
-    // Re-run Breaker-Builder + Resolver with error context
+    // re-run Breaker-Builder + Resolver with the failure context attached
     const retryPrompt = [
       '--- Original Request ---',
       opts.prompt,
@@ -175,20 +156,15 @@ export async function* runFixLoop(
   };
 }
 
-/**
- * Run the pipeline and capture the return value.
- * Same as runPipeline but explicitly typed to yield events and return result.
- */
+// Same as runPipeline, just typed so the return value is captured via yield*.
 async function* runPipelineWithResult(
   opts: PipelineOptions,
 ): AsyncGenerator<AgentEvent, PipelineResult> {
   return yield* runPipeline(opts);
 }
 
-/**
- * Run a single retry iteration: Breaker-Builder → Resolver.
- * Skips the Committee phase since the analysis is already done.
- */
+// One retry iteration: Breaker-Builder then Resolver. Skips Committee, no need to
+// re-analyze what we already analyzed.
 async function* runRetryIteration(
   opts: PipelineOptions & { systemPromptSuffix: string },
   previousErrors: string,
@@ -199,7 +175,6 @@ async function* runRetryIteration(
     description: 'Retrying fix based on verification feedback…',
   };
 
-  // Run Breaker-Builder with retry prompt
   let implementation = '';
   for await (const ev of runAgent({
     prompt: opts.prompt,
@@ -211,6 +186,7 @@ async function* runRetryIteration(
     signal: opts.signal,
     systemInstructionOverride: opts.systemPromptSuffix,
     contextMessages: opts.contextMessages,
+    interactionChannel: opts.interactionChannel,
   })) {
     if (ev.kind === 'text_delta') implementation += ev.text;
     if (ev.kind !== 'pipeline_phase' && ev.kind !== 'fix_iteration') {
@@ -218,7 +194,6 @@ async function* runRetryIteration(
     }
   }
 
-  // Run Resolver
   yield {
     kind: 'pipeline_phase',
     phase: 'resolver',
@@ -226,7 +201,7 @@ async function* runRetryIteration(
   };
 
   const verTools = filterReadOnlyTools(opts.tools);
-  // Also include shell for test running
+  // resolver needs shell too, for running tests
   const shellTool = opts.tools.get('shell');
   if (shellTool) verTools.set('shell', shellTool);
 

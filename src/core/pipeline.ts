@@ -1,16 +1,7 @@
-/**
- * Codexrev — multi-agent pipeline orchestrator.
- *
- * Runs three sequential phases, each a separate `runAgent()` call
- * with a role-specific system prompt and tool subset:
- *
- *   Committee  → read-only analysis
- *   Breaker-Builder → implementation (writes/edits)
- *   Resolver   → verification (read-only + shell for tests)
- *
- * Yields `AgentEvent`s including pipeline_phase markers so the UI
- * can show progress.
- */
+// Multi-agent pipeline: three sequential runAgent() calls, each with its own system
+// prompt and tool subset — Committee (read-only analysis), Breaker-Builder (writes),
+// Resolver (verification, read-only + shell). Yields pipeline_phase events so the UI
+// can show progress.
 
 import type { ContentGenerator } from './types.js';
 import type { AgentEvent } from './turn.js';
@@ -29,16 +20,15 @@ export interface PipelineOptions {
   settings: Settings;
   interactionChannel: InteractionChannel;
   signal?: AbortSignal;
-  /** Prior conversation context (e.g. from Plan mode) forwarded to each pipeline phase. */
+  /** forwarded to every phase, e.g. context carried over from Plan mode */
   contextMessages?: import('./types.js').Message[];
 }
 
-/** Build a read-only tool set that includes ask_user. */
 function readOnlyToolSet(allTools: Map<string, Tool>): Map<string, Tool> {
   return filterReadOnlyTools(allTools);
 }
 
-/** Build a tool set with only read + shell (for verification). */
+// read + shell only, for verification
 function verificationToolSet(allTools: Map<string, Tool>): Map<string, Tool> {
   const allowed = new Set(['read_file', 'glob', 'grep', 'web_fetch', 'web_search', 'shell', 'ask_user']);
   const filtered = new Map<string, Tool>();
@@ -48,7 +38,7 @@ function verificationToolSet(allTools: Map<string, Tool>): Map<string, Tool> {
   return filtered;
 }
 
-// ── System prompts for each pipeline phase ────────────────────────
+// system prompts per phase
 
 const COMMITTEE_PROMPT = [
   'You are the COMMITTEE agent — the analysis phase of a multi-agent pipeline.',
@@ -98,9 +88,9 @@ function buildResolverPrompt(originalPrompt: string, changesSummary: string): st
   ].join('\n');
 }
 
-// ── Pipeline phases ───────────────────────────────────────────────
+// pipeline phases
 
-/** Phase A: Committee — read-only analysis. */
+// Phase A: Committee, read-only analysis.
 async function* runCommittee(
   opts: PipelineOptions,
 ): AsyncGenerator<AgentEvent, string> {
@@ -121,7 +111,7 @@ async function* runCommittee(
     contextMessages: opts.contextMessages,
   })) {
     if (ev.kind === 'text_delta') analysis += ev.text;
-    // Forward all events to the UI (except pipeline_phase from sub-calls)
+    // don't forward pipeline_phase/fix_iteration from the sub-call, only the outer one matters
     if (ev.kind !== 'pipeline_phase' && ev.kind !== 'fix_iteration') {
       yield ev;
     }
@@ -130,7 +120,7 @@ async function* runCommittee(
   return analysis;
 }
 
-/** Phase B: Breaker-Builder — implementation. */
+// Phase B: Breaker-Builder, implementation.
 async function* runBreakerBuilder(
   opts: PipelineOptions,
   committeeAnalysis: string,
@@ -157,6 +147,7 @@ async function* runBreakerBuilder(
     signal: opts.signal,
     systemInstructionOverride: BREAKER_BUILDER_PROMPT,
     contextMessages: opts.contextMessages,
+    interactionChannel: opts.interactionChannel,
   })) {
     if (ev.kind === 'text_delta') implementation += ev.text;
     if (ev.kind !== 'pipeline_phase' && ev.kind !== 'fix_iteration') {
@@ -167,7 +158,7 @@ async function* runBreakerBuilder(
   return implementation;
 }
 
-/** Phase C: Resolver — verification. */
+// Phase C: Resolver, verification.
 async function* runResolver(
   opts: PipelineOptions,
   originalPrompt: string,
@@ -198,8 +189,6 @@ async function* runResolver(
   return result;
 }
 
-// ── Public API ────────────────────────────────────────────────────
-
 export interface PipelineResult {
   committeeAnalysis: string;
   implementation: string;
@@ -207,22 +196,13 @@ export interface PipelineResult {
   passed: boolean;
 }
 
-/**
- * Run the full Committee → Breaker-Builder → Resolver pipeline.
- *
- * This is a single pass. For the fix loop, use `runFixLoop()` which
- * calls this function and iterates on failure.
- */
+// Single pass through Committee -> Breaker-Builder -> Resolver. runFixLoop() wraps
+// this and retries on failure.
 export async function* runPipeline(
   opts: PipelineOptions,
 ): AsyncGenerator<AgentEvent, PipelineResult> {
-  // Phase A: Committee
   const analysis = yield* runCommittee(opts);
-
-  // Phase B: Breaker-Builder
   const implementation = yield* runBreakerBuilder(opts, analysis);
-
-  // Phase C: Resolver
   const verification = yield* runResolver(opts, opts.prompt, implementation);
 
   const passed = /^\s*GREEN:/im.test(verification);

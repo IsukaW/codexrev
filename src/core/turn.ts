@@ -1,11 +1,6 @@
-/**
- * Codexrev — agent turn manager.
- *
- * The "turn" is a single user → model → tool(s) → model exchange. The
- * agent loop keeps running turns until the model emits `stop` or the
- * user aborts. Streaming yields a stream of `AgentEvent`s the UI can
- * render in real-time.
- */
+// A "turn" is one user -> model -> tool(s) -> model exchange. The loop keeps running
+// turns until the model stops or the user aborts; streaming mode yields AgentEvents
+// as they happen so the UI can render live.
 
 import type {
   ContentGenerator,
@@ -19,6 +14,7 @@ import { ProviderError } from './types.js';
 import type { Tool, ToolContext, ToolResult } from '../tools/registry.js';
 import type { McpRegistry } from '../mcp/registry.js';
 import type { Settings } from '../config/schema.js';
+import type { InteractionChannel } from './interaction.js';
 import { logger } from '../utils/logger.js';
 
 export type AgentEvent =
@@ -29,7 +25,7 @@ export type AgentEvent =
   | { kind: 'usage'; usage: UsageStats }
   | { kind: 'turn_complete'; turns: number; reason: string }
   | { kind: 'error'; error: ProviderError }
-  // ── Pipeline & fix-loop events ────────────────────────────────
+  // pipeline / fix-loop events
   | { kind: 'pipeline_phase'; phase: 'committee' | 'breaker-builder' | 'resolver'; description: string }
   | { kind: 'fix_iteration'; attempt: number; maxAttempts: number; status: 'red' | 'green' | 'checking'; summary: string }
   | { kind: 'clarification_prompt'; question: string; suggestions: readonly string[] }
@@ -51,25 +47,26 @@ export interface RunAgentOptions {
   settings: Settings;
   stream: boolean;
   signal?: AbortSignal;
-  /** Extra system-prompt text appended for the current mode. */
+  /** extra system-prompt text for the current mode */
   systemPromptSuffix?: string;
-  /** Override the default system instruction entirely (used by pipeline phases). */
+  /** replaces the default system instruction entirely — pipeline phases use this */
   systemInstructionOverride?: string;
-  /**
-   * Prior conversation messages to prepend as context.
-   * Used when switching modes (e.g. Plan → Agent) so the agent
-   * can see what was discussed / planned in the previous mode.
-   */
+  // prior messages to prepend, e.g. when switching Plan -> Agent so the agent still
+  // sees what was discussed/planned
   contextMessages?: Message[];
+  // when set, mutating tools (shell/write_file/edit) get gated through
+  // interactionChannel.requestApproval() unless bypassApprovals/approvalMode says otherwise
+  interactionChannel?: InteractionChannel;
 }
 
-/** Build a system instruction that includes the current working directory. */
 function buildSystemInstruction(settings: Settings, suffix?: string): string {
   const parts = [
     'You are Codexrev, a multi-provider agentic CLI assistant.',
+    `Current date: ${new Date().toISOString()} (${new Date().toDateString()})`,
     `Working directory: ${process.cwd()}`,
     `Provider: ${settings.provider}`,
     `Model: ${settings.model}`,
+    `Shell sandbox: ${settings.sandbox}`,
     'When you need to use tools, prefer the most specific tool. If the user has not yet approved a destructive action, ask for confirmation.',
   ];
   if (suffix) parts.push(suffix);
@@ -86,15 +83,12 @@ async function executeToolCall(
   if (builtin) {
     return await builtin.execute(call.arguments, ctx);
   }
-  // Otherwise, route to MCP
+  // not a builtin, so it must be an MCP tool
   return await mcp.callTool(call.name, call.arguments);
 }
 
-/**
- * Run the agent loop until the model emits `stop`, hits max turns,
- * or is aborted. With `stream: false` returns a final `AgentResult`;
- * with `stream: true` returns an async iterable of `AgentEvent`s.
- */
+// runs until the model stops, hits max turns, or gets aborted. stream:false collects
+// everything into an AgentResult; stream:true gives back the raw AgentEvent iterable.
 export function runAgent(opts: RunAgentOptions & { stream: false }): Promise<AgentResult>;
 export function runAgent(opts: RunAgentOptions & { stream: true }): AsyncIterable<AgentEvent>;
 export function runAgent(
@@ -107,14 +101,16 @@ export function runAgent(
 }
 
 async function collectAgent(opts: RunAgentOptions): Promise<AgentResult> {
-  const events: AgentEvent[] = [];
   let finalText = '';
   let usage: UsageStats = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
   let turns = 0;
   let finishReason = 'completed';
+  // streamAgent populates this with the full transcript (context + user
+  // prompt + assistant/tool turns) so callers of the non-streaming API
+  // can persist it and carry session memory into the next `send()`.
+  const sink: { messages: Message[] } = { messages: [] };
 
-  for await (const event of streamAgent(opts)) {
-    events.push(event);
+  for await (const event of streamAgent(opts, sink)) {
     if (event.kind === 'text_delta') finalText += event.text;
     if (event.kind === 'usage') usage = event.usage;
     if (event.kind === 'turn_complete') {
@@ -123,16 +119,37 @@ async function collectAgent(opts: RunAgentOptions): Promise<AgentResult> {
     }
   }
 
-  return { finalText, messages: [], usage, turns, finishReason };
+  return { finalText, messages: sink.messages, usage, turns, finishReason };
 }
 
-async function* streamAgent(opts: RunAgentOptions): AsyncIterable<AgentEvent> {
-  const { prompt, provider, tools, mcp, settings, signal, systemPromptSuffix, systemInstructionOverride, contextMessages } = opts;
+async function* streamAgent(
+  opts: RunAgentOptions,
+  sink?: { messages: Message[] },
+): AsyncIterable<AgentEvent> {
+  const { prompt, provider, tools, mcp, settings, signal, systemPromptSuffix, systemInstructionOverride, contextMessages, interactionChannel } = opts;
+
+  // Build the tool-approval gate. `undefined` → tools run without asking.
+  const approvalsActive =
+    !!interactionChannel && !settings.bypassApprovals && settings.approvalMode !== 'never';
+  const sessionApproved = new Set<string>();
+  const askApproval = approvalsActive
+    ? async (toolName: string, args: unknown): Promise<boolean> => {
+        if (sessionApproved.has(toolName)) return true;
+        const summary = describeToolCall(toolName, args);
+        const decision = await interactionChannel!.requestApproval(toolName, summary);
+        if (decision === 'approve-session') {
+          sessionApproved.add(toolName);
+          return true;
+        }
+        return decision === 'approve';
+      }
+    : undefined;
   // Prepend any prior conversation context, then add the current user prompt
   const messages: Message[] = [
     ...(contextMessages ?? []),
     { role: 'user', parts: [{ kind: 'text', text: prompt }] },
   ];
+  if (sink) sink.messages = messages;
   const systemInstruction = systemInstructionOverride ?? buildSystemInstruction(settings, systemPromptSuffix);
 
   // Aggregate tool declarations from builtins + MCP
@@ -213,7 +230,7 @@ async function* streamAgent(opts: RunAgentOptions): AsyncIterable<AgentEvent> {
     }
 
     // Execute each tool call sequentially
-    const ctx: ToolContext = { cwd: process.cwd(), signal };
+    const ctx: ToolContext = { cwd: process.cwd(), signal, ask: askApproval };
     for (const call of toolCalls) {
       try {
         const result = await executeToolCall(call, tools, mcp, ctx);
@@ -223,6 +240,7 @@ async function* streamAgent(opts: RunAgentOptions): AsyncIterable<AgentEvent> {
           name: call.name,
           content: resultToContent(result),
           isError: result.isError,
+          metadata: result.metadata,
         };
         messages.push({ role: 'tool', parts: [toolResult] });
         yield { kind: 'tool_result', toolResult };
@@ -242,6 +260,16 @@ async function* streamAgent(opts: RunAgentOptions): AsyncIterable<AgentEvent> {
   }
 
   yield { kind: 'turn_complete', turns, reason: 'max_turns' };
+}
+
+// one-line summary of a tool call for the approval prompt
+function describeToolCall(toolName: string, args: unknown): string {
+  const a = (args ?? {}) as Record<string, unknown>;
+  if (toolName === 'shell' && typeof a.command === 'string') return a.command;
+  if ((toolName === 'write_file' || toolName === 'edit') && typeof a.file_path === 'string') {
+    return `${toolName === 'edit' ? 'edit' : 'write'} ${a.file_path}`;
+  }
+  return `${toolName}(${JSON.stringify(a).slice(0, 120)})`;
 }
 
 function addUsage(a: UsageStats, b: UsageStats): UsageStats {

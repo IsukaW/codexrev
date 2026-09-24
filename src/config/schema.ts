@@ -9,6 +9,7 @@ import type { ProviderId } from '../core/types.js';
 import { PROVIDER_IDS, providerMeta } from '../providers/registry.js';
 import type { InteractionMode } from '../core/modes.js';
 import type { VerificationMode } from '../core/verification.js';
+import { ConfigError } from '../utils/errors.js';
 
 export type SandboxMode = 'auto' | 'seatbelt' | 'docker' | 'podman' | 'off';
 export type ThemeName = 'dark' | 'light' | 'solarized' | 'monokai' | 'nord';
@@ -21,22 +22,64 @@ export interface ProviderSettings {
   maxOutputTokens?: number;
   temperature?: number;
   topP?: number;
+  // undefined leaves the SDK default (10min) alone, see ContentGeneratorConfig.timeoutMs
+  timeoutMs?: number;
 }
 
 export interface McpServerEntry {
-  /** Unique identifier used in the CLI's /mcp list. */
-  name: string;
-  /** Either "stdio", "sse", or "http". */
+  name: string; // shown in the CLI's /mcp list
   transport: 'stdio' | 'sse' | 'http';
-  /** stdio: command + args. */
+  // stdio
   command?: string;
   args?: string[];
-  /** sse/http: url + headers. */
+  // sse/http
   url?: string;
   headers?: Record<string, string>;
   env?: Record<string, string>;
   trust?: boolean;
   timeoutMs?: number;
+}
+
+// Resolver Engine weights per role, review-pipeline feature. Defaults below match
+// the Section 2 values from the dev guide; buildFailure covers the deterministic
+// Build role which has no LLM verdict of its own so it's outside the BA/Architect/Dev/QA/PM split.
+export interface ReviewPipelineResolverWeights {
+  ba: number;
+  architect: number;
+  dev: number;
+  qa: number;
+  pm: number;
+  buildFailure: number;
+}
+
+// Lives under settings.reviewPipeline, overridable from .codexrev/settings.json like
+// anything else (loadSettings() just deep-merges, no allowlist needed here).
+export interface ReviewPipelineSettings {
+  resolverWeights: ReviewPipelineResolverWeights;
+  // capped at MAX_FIX_ITERATIONS_CEILING regardless of config, see validateReviewPipelineSettings().
+  // not the same knob as maxFixAttempts above — that's the older Agent-mode fix loop.
+  maxFixIterations: number;
+}
+
+// never exceed 5 Breaker-Builder iterations, per the proposal's NFRs
+export const MAX_FIX_ITERATIONS_CEILING = 5;
+
+export function validateReviewPipelineSettings(rp: ReviewPipelineSettings): void {
+  if (rp.maxFixIterations > MAX_FIX_ITERATIONS_CEILING) {
+    throw new ConfigError(
+      `reviewPipeline.maxFixIterations (${rp.maxFixIterations}) exceeds the hard limit of ` +
+        `${MAX_FIX_ITERATIONS_CEILING} Breaker-Builder iterations (see the proposal's NFRs).`,
+    );
+  }
+  if (rp.maxFixIterations < 1) {
+    throw new ConfigError('reviewPipeline.maxFixIterations must be at least 1.');
+  }
+  const weights = rp.resolverWeights;
+  for (const [role, weight] of Object.entries(weights)) {
+    if (typeof weight !== 'number' || Number.isNaN(weight) || weight < 0) {
+      throw new ConfigError(`reviewPipeline.resolverWeights.${role} must be a non-negative number.`);
+    }
+  }
 }
 
 export interface Settings {
@@ -51,20 +94,17 @@ export interface Settings {
   telemetry: boolean;
   checkpointing: boolean;
   mcpServers: Record<string, McpServerEntry>;
-  /** Tool execution timeout (ms). 0 = no timeout. */
-  toolTimeoutMs: number;
-  /** Maximum number of agent turns per request. */
+  toolTimeoutMs: number; // 0 = no timeout
   maxTurns: number;
-  /** Approval policy for shell commands. */
   approvalMode: 'always' | 'on-request' | 'never';
-  /** Default interaction mode on startup. */
+  // "YOLO" switch — skips every tool-approval prompt regardless of approvalMode.
+  // toggled from the in-TUI Control Panel.
+  bypassApprovals: boolean;
   defaultMode: InteractionMode;
-  /** Maximum number of fix-loop iterations in Agent mode. */
-  maxFixAttempts: number;
-  /** Verification strategy for the fix loop. */
+  maxFixAttempts: number; // agent-mode fix loop cap
   verificationMode: VerificationMode;
-  /** Extra metadata stored on the user's machine only. */
-  metadata: Record<string, unknown>;
+  metadata: Record<string, unknown>; // machine-local, not synced anywhere
+  reviewPipeline: ReviewPipelineSettings;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -84,8 +124,13 @@ export const DEFAULT_SETTINGS: Settings = {
   toolTimeoutMs: 60_000,
   maxTurns: 50,
   approvalMode: 'on-request',
+  bypassApprovals: false,
   defaultMode: 'ask',
   maxFixAttempts: 5,
   verificationMode: 'auto',
   metadata: {},
+  reviewPipeline: {
+    resolverWeights: { ba: 0.2, architect: 0.3, dev: 0.3, qa: 0.15, pm: 0.05, buildFailure: 0.4 },
+    maxFixIterations: MAX_FIX_ITERATIONS_CEILING,
+  },
 };

@@ -35,12 +35,105 @@ describe('runInit', () => {
     expect(cfg).not.toBeNull();
     expect(cfg?.provider).toBe('openai');
     expect(cfg?.model).toBe('gpt-4o');
-    expect(cfg?.apiKey.iv).toBeTruthy();
-    expect(cfg?.apiKey.ciphertext).toBeTruthy();
+    // The sealed key lives on the provider entry, not at the top level.
+    expect(cfg?.apiKey).toBeUndefined();
+    expect(cfg?.providers?.[0].apiKey?.iv).toBeTruthy();
+    expect(cfg?.providers?.[0].apiKey?.ciphertext).toBeTruthy();
 
     const dek = await getDek(tmpRoot);
     expect(dek).not.toBeNull();
     expect(dek?.length).toBe(32);
+  });
+
+  it('seeds the multi-provider registry with a default model', async () => {
+    await runInit({
+      cwd: tmpRoot,
+      provider: 'openai',
+      model: 'gpt-4o',
+      apiKey: 'sk-test-abc',
+      baseUrl: 'https://example.test/v1',
+      vision: true,
+      maxInputTokens: 128000,
+      maxOutputTokens: 4096,
+      nonInteractive: true,
+    });
+
+    const cfg = await loadProjectConfig(tmpRoot);
+    expect(cfg?.providers).toHaveLength(1);
+    // Base URL and token limits live only in the registry — not mirrored
+    // at the top level.
+    expect(cfg?.baseUrl).toBeUndefined();
+    expect(cfg?.maxOutputTokens).toBeUndefined();
+    const entry = cfg!.providers![0];
+    expect(entry.baseUrl).toBe('https://example.test/v1');
+    expect(entry.name).toBe('openai');
+    expect(entry.vendor).toBe('openai');
+    // The registry entry owns the sealed key; the top level does not
+    // duplicate it.
+    expect(entry.apiKey?.ciphertext).toBeTruthy();
+    expect(cfg?.apiKey).toBeUndefined();
+    expect(entry.models).toHaveLength(1);
+    expect(entry.models[0]).toMatchObject({
+      id: 'gpt-4o',
+      name: 'gpt-4o',
+      toolCalling: true, // defaulted from provider capability
+      vision: true,
+      maxInputTokens: 128000,
+      maxOutputTokens: 4096,
+      default: true,
+    });
+  });
+
+  it('defaults tool-calling from the provider and can be turned off', async () => {
+    await runInit({
+      cwd: tmpRoot,
+      provider: 'ollama',
+      model: 'llama3.1',
+      toolCalling: false,
+      nonInteractive: true,
+    });
+
+    const cfg = await loadProjectConfig(tmpRoot);
+    expect(cfg?.providers?.[0].models[0].toolCalling).toBe(false);
+    expect(cfg?.providers?.[0].models[0].vision).toBe(false);
+    process.exitCode = 0;
+  });
+
+  it('auto-sets a 30min timeout for a local provider', async () => {
+    await runInit({
+      cwd: tmpRoot,
+      provider: 'ollama',
+      model: 'llama3.1',
+      nonInteractive: true,
+    });
+    const cfg = await loadProjectConfig(tmpRoot);
+    expect(cfg?.providers?.[0].models[0].timeoutMs).toBe(30 * 60_000);
+    process.exitCode = 0;
+  });
+
+  it('leaves timeout unset for a cloud provider', async () => {
+    await runInit({
+      cwd: tmpRoot,
+      provider: 'openai',
+      model: 'gpt-4o',
+      apiKey: 'sk-test',
+      nonInteractive: true,
+    });
+    const cfg = await loadProjectConfig(tmpRoot);
+    expect(cfg?.providers?.[0].models[0].timeoutMs).toBeUndefined();
+  });
+
+  it('--timeout-ms overrides the local auto-default', async () => {
+    await runInit({
+      cwd: tmpRoot,
+      provider: 'ollama',
+      model: 'llama3.1',
+      timeoutMs: 60_000,
+      nonInteractive: true,
+    });
+    const cfg = await loadProjectConfig(tmpRoot);
+    expect(cfg?.providers?.[0].models[0].timeoutMs).toBe(60_000);
+    process.exitCode = 0;
   });
 
   it('refuses to overwrite existing config without --reset', async () => {
@@ -118,9 +211,9 @@ describe('runInit', () => {
     expect(cfg?.provider).toBe('ollama');
     expect(cfg?.model).toBe('llama3.1');
     // The encrypted payload still has *something* sealed (the provider id
-    // is substituted as a sentinel).
-    expect(cfg?.apiKey.iv).toBeTruthy();
-    expect(cfg?.apiKey.ciphertext).toBeTruthy();
+    // is substituted as a sentinel) — on the provider entry.
+    expect(cfg?.providers?.[0].apiKey?.iv).toBeTruthy();
+    expect(cfg?.providers?.[0].apiKey?.ciphertext).toBeTruthy();
     process.exitCode = 0;
   });
 

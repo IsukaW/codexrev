@@ -1,15 +1,7 @@
-/**
- * Codexrev — extension loader.
- *
- * Reads every `codexrev-extension.json` manifest under the user's
- * extensions directory and assembles them into an `ExtensionRegistry`.
- * The registry is consumed by the CLI to inject commands, tools,
- * themes, and prompt snippets.
- *
- * Extensions are NOT auto-loaded — the user runs
- * `codexrev extensions install <dir>` (or copies the directory
- * manually) and the next launch picks them up.
- */
+// Reads every codexrev-extension.json under the extensions dir and builds an
+// ExtensionRegistry the CLI uses to inject commands/tools/themes/prompts.
+// Nothing auto-loads — user runs `codexrev extensions install <dir>` and the
+// next launch picks it up.
 
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -30,17 +22,13 @@ const MANIFEST_FILE = 'codexrev-extension.json';
 const IGNORED_DIRS = new Set(['node_modules', '.git', 'dist']);
 
 export interface LoaderOptions {
-  /** Override the extensions root. Defaults to ~/.codexrev/extensions. */
+  /** defaults to ~/.codexrev/extensions */
   root?: string;
-  /** When true, log warnings about malformed manifests. */
   verbose?: boolean;
 }
 
-/**
- * Scan the extensions directory and load every well-formed manifest.
- * Malformed manifests are logged and skipped — one bad extension must
- * not break the CLI.
- */
+// loads every well-formed manifest; a bad one gets logged and skipped rather than
+// taking down the whole CLI
 export async function loadExtensions(opts: LoaderOptions = {}): Promise<ExtensionRegistry> {
   const root = opts.root ?? getCodexrevPaths().extensionsDir;
   const registry: ExtensionRegistry = {
@@ -97,7 +85,6 @@ async function loadOne(extRoot: string, manifestPath: string): Promise<LoadedExt
     throw new Error(`invalid JSON in ${manifestPath}: ${(err as Error).message}`);
   }
   const manifest = validateManifest(json, manifestPath);
-  // Sanity-check that the extension root exists.
   const s = await stat(extRoot);
   if (!s.isDirectory()) {
     throw new Error(`extension root is not a directory: ${extRoot}`);
@@ -138,30 +125,23 @@ function addToRegistry(reg: ExtensionRegistry, loaded: LoadedExtension): void {
   }
 }
 
-/** Return slash-commands contributed by extensions. */
 export function getExtensionCommands(reg: ExtensionRegistry): ExtensionCommand[] {
   return reg.commands;
 }
 
-/** Return custom tool refs contributed by extensions. */
 export function getExtensionTools(reg: ExtensionRegistry): ExtensionToolRef[] {
   return reg.tools;
 }
 
-/** Return theme contributions. */
 export function getExtensionThemes(reg: ExtensionRegistry): ExtensionTheme[] {
   return reg.themes;
 }
 
-/** Return prompt snippet contributions. */
 export function getExtensionPrompts(reg: ExtensionRegistry): ExtensionPrompt[] {
   return reg.prompts;
 }
 
-/**
- * Install an extension by copying (or symlinking) `sourceDir` into the
- * user's extensions root. Returns the installed directory path.
- */
+// copies sourceDir into the user's extensions root, returns the installed path
 export async function installExtension(sourceDir: string): Promise<string> {
   const src = path.resolve(sourceDir);
   const stat = await import('node:fs/promises').then((m) => m.stat(src));
@@ -179,7 +159,6 @@ export async function installExtension(sourceDir: string): Promise<string> {
   return dst;
 }
 
-/** Remove an installed extension by name. */
 export async function uninstallExtension(name: string): Promise<void> {
   const target = path.join(getCodexrevPaths().extensionsDir, name);
   if (!existsSync(target)) {

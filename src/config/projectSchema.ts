@@ -19,12 +19,15 @@ export interface ModelConfig {
   vision?: boolean;
   maxInputTokens?: number;
   maxOutputTokens?: number;
+  // auto-set for local vendors (ollama/lmstudio/litellm) at add-time, see
+  // DEFAULT_LOCAL_TIMEOUT_MS in providers/registry.ts. cloud providers just use the SDK default.
+  timeoutMs?: number;
   default?: boolean;
 }
 
 export interface ProviderConfigEntry {
   name: string;
-  vendor: 'openai' | 'anthropic' | 'google' | 'ollama' | 'lmstudio' | 'litellm' | 'customendpoint';
+  vendor: 'openai' | 'anthropic' | 'google' | 'ollama' | 'lmstudio' | 'litellm' | 'deepseek' | 'customendpoint';
   apiKey?: EncryptedPayload;
   baseUrl?: string;
   apiType?: 'chat-completions' | 'messages' | 'generateContent';
@@ -39,7 +42,8 @@ export interface ProjectConfig {
   maxOutputTokens?: number;
   temperature?: number;
   topP?: number;
-  apiKey: EncryptedPayload;
+  // legacy sealed key, from before providers[] existed — omitted once each provider owns its own
+  apiKey?: EncryptedPayload;
   createdAt: string;
   updatedAt: string;
   providers?: ProviderConfigEntry[];

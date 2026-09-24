@@ -42,6 +42,26 @@ describe('loadSettings with project config', () => {
     expect(s.providers.ollama.model).toBe('llama3.1');
     expect(s.providers.lmstudio.model).toBe('qwen2.5-7b-instruct');
     expect(s.providers.litellm.model).toBe('gpt-4o');
+    // Local providers get a generous request timeout automatically, even
+    // with zero configuration — a larger local model can genuinely take
+    // longer than the SDK's 10-minute default without being stuck.
+    expect(s.providers.ollama.timeoutMs).toBe(30 * 60_000);
+    expect(s.providers.lmstudio.timeoutMs).toBe(30 * 60_000);
+    expect(s.providers.litellm.timeoutMs).toBe(30 * 60_000);
+    // Cloud providers keep the SDK default — untouched.
+    expect(s.providers.openai.timeoutMs).toBeUndefined();
+    expect(s.providers.anthropic.timeoutMs).toBeUndefined();
+  });
+
+  it('lets an explicit settings.json timeoutMs override the local auto-default', async () => {
+    process.chdir(tmpRoot);
+    await fs.mkdir(path.join(tmpRoot, '.codexrev'), { recursive: true });
+    await fs.writeFile(
+      path.join(tmpRoot, '.codexrev', 'settings.json'),
+      JSON.stringify({ providers: { ollama: { provider: 'ollama', model: 'llama3.1', timeoutMs: 60_000 } } }),
+    );
+    const s = await loadSettings();
+    expect(s.providers.ollama.timeoutMs).toBe(60_000); // NOT overwritten by the 30-min auto-default
   });
 
   it('merges project config and decrypts the api key', async () => {
@@ -126,6 +146,95 @@ describe('loadSettings with project config', () => {
     expect(s.providers.openai.apiKey).toBe('sk-ds-test');
   });
 
+  it('does NOT leak the legacy top-level key to a different keyless provider', async () => {
+    process.chdir(tmpRoot);
+    const dek = generateDek();
+    await setDek(tmpRoot, dek);
+    await saveProjectConfig(tmpRoot, {
+      schemaVersion: 1,
+      provider: 'openai',
+      model: 'gpt-4o',
+      apiKey: encrypt('sk-openai-secret', dek),
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+      providers: [
+        // Different provider, openai-compatible, NO key of its own.
+        { name: 'other-endpoint', vendor: 'customendpoint', baseUrl: 'https://other.test/v1', models: [
+          { id: 'other-model', name: 'other-model', default: true },
+        ]},
+      ],
+    });
+
+    const s = await loadSettings();
+    expect(s.model).toBe('other-model');
+    expect(s.providers.openai.apiKey).not.toBe('sk-openai-secret');
+  });
+
+  it('DOES inherit the legacy top-level key when the keyless provider IS the named one', async () => {
+    process.chdir(tmpRoot);
+    const dek = generateDek();
+    await setDek(tmpRoot, dek);
+    await saveProjectConfig(tmpRoot, {
+      schemaVersion: 1,
+      provider: 'openai',
+      model: 'gpt-4o',
+      apiKey: encrypt('sk-openai-secret', dek),
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+      providers: [
+        { name: 'openai', vendor: 'openai', models: [
+          { id: 'gpt-4o', name: 'gpt-4o', default: true },
+        ]},
+      ],
+    });
+
+    const s = await loadSettings();
+    expect(s.providers.openai.apiKey).toBe('sk-openai-secret');
+  });
+
+  it('honors an explicit timeoutMs on the active registry model over the local auto-default', async () => {
+    process.chdir(tmpRoot);
+    const dek = generateDek();
+    await setDek(tmpRoot, dek);
+    await saveProjectConfig(tmpRoot, {
+      schemaVersion: 1,
+      provider: 'ollama',
+      model: 'llama3.1',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+      providers: [
+        { name: 'ollama', vendor: 'ollama', models: [
+          { id: 'llama3.1', name: 'llama3.1', default: true, timeoutMs: 5 * 60_000 },
+        ]},
+      ],
+    });
+
+    const s = await loadSettings();
+    expect(s.providers.ollama.timeoutMs).toBe(5 * 60_000);
+  });
+
+  it('self-heals an older local-provider registry entry with no timeoutMs at all', async () => {
+    process.chdir(tmpRoot);
+    const dek = generateDek();
+    await setDek(tmpRoot, dek);
+    await saveProjectConfig(tmpRoot, {
+      schemaVersion: 1,
+      provider: 'ollama',
+      model: 'llama3.1',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+      providers: [
+        // Written before the timeoutMs field existed — no timeoutMs anywhere.
+        { name: 'ollama', vendor: 'ollama', models: [
+          { id: 'llama3.1', name: 'llama3.1', default: true },
+        ]},
+      ],
+    });
+
+    const s = await loadSettings();
+    expect(s.providers.ollama.timeoutMs).toBe(30 * 60_000);
+  });
+
   it('falls back to legacy single-key path when no providers', async () => {
     process.chdir(tmpRoot);
     const dek = generateDek();
@@ -187,5 +296,43 @@ describe('loadSettings with project config', () => {
       updatedAt: '2026-01-01T00:00:00Z',
     });
     await expect(loadSettings()).rejects.toThrow(/decrypt API key/);
+  });
+});
+
+describe('loadSettings — reviewPipeline settings (Feature 2 — Phase 3)', () => {
+  it('is configurable purely via .codexrev/settings.json, no code changes needed', async () => {
+    process.chdir(tmpRoot);
+    await fs.mkdir(path.join(tmpRoot, '.codexrev'), { recursive: true });
+    await fs.writeFile(
+      path.join(tmpRoot, '.codexrev', 'settings.json'),
+      JSON.stringify({
+        reviewPipeline: { maxFixIterations: 3, resolverWeights: { qa: 0.25 } },
+      }),
+      'utf-8',
+    );
+
+    const s = await loadSettings();
+    expect(s.reviewPipeline.maxFixIterations).toBe(3);
+    // Deep-merged: only `qa` was overridden, the rest keep their Section 2 defaults.
+    expect(s.reviewPipeline.resolverWeights).toEqual({
+      ba: 0.2,
+      architect: 0.3,
+      dev: 0.3,
+      qa: 0.25,
+      pm: 0.05,
+      buildFailure: 0.4,
+    });
+  });
+
+  it('rejects a project override that exceeds the 5-iteration hard ceiling', async () => {
+    process.chdir(tmpRoot);
+    await fs.mkdir(path.join(tmpRoot, '.codexrev'), { recursive: true });
+    await fs.writeFile(
+      path.join(tmpRoot, '.codexrev', 'settings.json'),
+      JSON.stringify({ reviewPipeline: { maxFixIterations: 99 } }),
+      'utf-8',
+    );
+
+    await expect(loadSettings()).rejects.toThrow(/exceeds the hard limit/);
   });
 });

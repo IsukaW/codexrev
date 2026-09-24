@@ -1,9 +1,4 @@
-/**
- * Codexrev — Google Gemini provider adapter.
- *
- * Wraps the official `@google/genai` SDK and normalises its responses
- * into Codexrev's `ContentGenerator` interface.
- */
+// Wraps @google/genai, normalizes into our ContentGenerator interface.
 
 import { GoogleGenAI, type GenerateContentResponse } from '@google/genai';
 import type {
@@ -87,7 +82,7 @@ export class GoogleGenerator implements ContentGenerator {
     }
   }
 
-  // ─── helpers ────────────────────────────────────────────────────
+  // helpers
   private toApiParams(req: GenerateRequest) {
     const contents = req.messages.map(toGoogleContent);
     const tools = req.tools?.length
