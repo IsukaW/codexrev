@@ -1,11 +1,6 @@
-/**
- * Codexrev — programmatic API entry point.
- *
- * Embeds of Codexrev (other Node.js apps, tests, automation) import
- * from `codexrev` and call the functions exported here.
- */
+// Programmatic API entry point — embedders import `codexrev` and call what's exported here.
 
-// ─── Core types ───────────────────────────────────────────────────
+// core types
 export type {
   Message,
   ContentPart,
@@ -28,11 +23,11 @@ export type {
 } from '../core/types.js';
 export { ProviderError } from '../core/types.js';
 
-// ─── Agent loop ───────────────────────────────────────────────────
+// agent loop
 export { runAgent, type AgentEvent, type AgentResult } from '../core/turn.js';
 export { createAgent, type Agent, type AgentOptions } from '../core/agent.js';
 
-// ─── Provider factories ───────────────────────────────────────────
+// provider factories
 export { buildProvider, type ProviderHandle } from '../providers/index.js';
 export type { ProviderMeta } from '../providers/registry.js';
 export {
@@ -43,18 +38,18 @@ export {
 } from '../providers/registry.js';
 export { probeLocalProvider, resolveBaseUrlForProvider } from '../providers/health.js';
 
-// ─── Configuration ────────────────────────────────────────────────
+// configuration
 export type {
   Settings,
   ProviderSettings,
   McpServerEntry,
   ThemeName,
 } from '../config/schema.js';
-// `SandboxMode` is exported below from `../sandbox/index.js` (canonical).
+// SandboxMode is re-exported below from sandbox/index.js (that's the canonical one)
 export { DEFAULT_SETTINGS } from '../config/schema.js';
 export { loadSettings, saveSettings } from '../config/loader.js';
 
-// ─── Tools ────────────────────────────────────────────────────────
+// tools
 export { ToolRegistry, type Tool, type ToolResult, type ToolContext } from '../tools/registry.js';
 export { builtinTools, type BuiltinToolName } from '../tools/builtin.js';
 export { createToolRegistry } from '../tools/registry.js';
@@ -69,10 +64,10 @@ export type {
   WebSearchTool,
 } from '../tools/specs.js';
 
-// ─── MCP ──────────────────────────────────────────────────────────
+// mcp
 export { createMcpRegistry, type McpRegistry } from '../mcp/registry.js';
 
-// ─── Errors ───────────────────────────────────────────────────────
+// errors
 export {
   CodexrevError,
   ConfigError,
@@ -83,11 +78,10 @@ export {
   LocalServerError,
   CheckpointError as _LegacyCheckpointError,
 } from '../utils/errors.js';
-// Re-export the canonical CheckpointError from the new services module
-// (preferred over the legacy shim above).
+// prefer this one over the legacy shim above
 export { CheckpointError } from '../services/checkpoint.js';
 
-// ─── Checkpointing ───────────────────────────────────────────────
+// checkpointing
 export {
   CheckpointService,
   openCheckpoints,
@@ -95,7 +89,7 @@ export {
   type CheckpointRecord,
 } from '../services/checkpoint.js';
 
-// ─── Sandboxing ──────────────────────────────────────────────────
+// sandboxing
 export {
   SandboxManager,
   SandboxError as _LegacySandboxError,
@@ -111,7 +105,7 @@ export {
   type ResolvedSandbox,
 } from '../sandbox/index.js';
 
-// ─── Telemetry ───────────────────────────────────────────────────
+// telemetry
 export {
   initTelemetry,
   shutdownTelemetry,
@@ -123,12 +117,12 @@ export {
   type TelemetryOptions,
 } from '../telemetry/index.js';
 
-// ─── Paths / logger ──────────────────────────────────────────────
+// paths / logger
 export { getCodexrevPaths, ensureCodexrevHome, findProjectConfig } from '../utils/paths.js';
 export { logger, type LogLevel } from '../utils/logger.js';
 export { ENV } from '../utils/env.js';
 
-// Extensions
+// extensions
 export {
   loadExtensions,
   installExtension,

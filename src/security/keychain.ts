@@ -1,19 +1,10 @@
-/**
- * Codexrev — OS keychain wrapper.
- *
- * Persists the 32-byte data encryption key (DEK) used to seal project
- * secrets. The DEK is bound to the project's absolute path so the same
- * keychain account cannot be reused across different projects.
- *
- * Backend: `keytar` (Windows Credential Manager / macOS Keychain / Linux
- * libsecret via GNOME Keyring or KWallet). When the native module fails
- * to load (e.g. libsecret not installed on Linux), `isAvailable()`
- * returns `false` and all read/write calls throw a `SecretsError` with
- * install instructions. We never silently fall back to plaintext.
- *
- * The test suite can opt into an in-memory fake via
- * `CODEXREV_TEST_FAKE_KEYCHAIN=1` — see `tests/security/keychain.test.ts`.
- */
+// OS keychain wrapper — persists the 32-byte DEK used to seal project secrets. The DEK
+// is bound to the project's absolute path so one keychain account can't leak across
+// projects. Backed by keytar (Credential Manager / Keychain / libsecret). If the
+// native module won't load (e.g. no libsecret on Linux), isAvailable() is false and
+// every read/write throws SecretsError with install instructions — no silent
+// plaintext fallback. Tests can swap in an in-memory fake with
+// CODEXREV_TEST_FAKE_KEYCHAIN=1, see tests/security/keychain.test.ts.
 
 import { createHash } from 'node:crypto';
 import os from 'node:os';
@@ -115,7 +106,7 @@ export async function deleteDek(projectRoot: string): Promise<boolean> {
   return m.deletePassword(KEYCHAIN_SERVICE, account);
 }
 
-/** Test-only: clear the in-memory fake. Not part of the public API surface. */
+// test-only, clears the in-memory fake, not public API
 export function _resetFakeStore(): void {
   fakeStore.clear();
 }

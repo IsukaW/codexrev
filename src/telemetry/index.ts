@@ -1,20 +1,6 @@
-/**
- * Codexrev — telemetry module.
- *
- * Opt-in OpenTelemetry tracing. The exporter talks OTLP/gRPC to whatever
- * collector the operator runs (Jaeger / Tempo / SigNoz / an OTLP
- * compatible backend).
- *
- * Public surface:
- *   - `initTelemetry(opts)`   — install the global tracer provider
- *   - `withSpan(name, fn)`    — wrap async work in a span
- *   - `shutdownTelemetry()`   — flush + close on exit
- *   - `getTracer()`           — fetch the named tracer
- *
- * Telemetry is OFF by default; it is enabled when the user sets
- * `telemetry: true` in their `~/.codexrev/settings.json` or runs the CLI
- * with `--telemetry` (which sets `settings.telemetry = true`).
- */
+// Opt-in OpenTelemetry tracing, exports OTLP/gRPC to whatever collector the operator
+// runs (Jaeger, Tempo, SigNoz, any OTLP backend). Off by default — set telemetry: true
+// in ~/.codexrev/settings.json or pass --telemetry to turn it on.
 
 import { trace, type Tracer } from '@opentelemetry/api';
 import { NodeSDK } from '@opentelemetry/sdk-node';
@@ -26,11 +12,11 @@ import {
 } from '@opentelemetry/semantic-conventions';
 
 export interface TelemetryOptions {
-  /** OTLP/gRPC endpoint. Defaults to `http://localhost:4317`. */
+  /** defaults to http://localhost:4317 */
   endpoint?: string;
-  /** Set the service.version attribute. Default `'0.1.0'`. */
+  /** service.version attribute, default '0.1.0' */
   version?: string;
-  /** Override service name. Default `'codexrev'`. */
+  /** default 'codexrev' */
   serviceName?: string;
 }
 
@@ -39,10 +25,7 @@ const TRACER_NAME = 'codexrev';
 let _sdk: NodeSDK | null = null;
 let initialised = false;
 
-/**
- * Initialise the global OpenTelemetry SDK. Calling this more than once
- * is a no-op. Returns whether telemetry was installed.
- */
+// calling this more than once is a no-op; returns whether telemetry actually got installed
 export function initTelemetry(opts: TelemetryOptions = {}): boolean {
   if (initialised) return _sdk !== null;
   initialised = true;
@@ -60,7 +43,7 @@ export function initTelemetry(opts: TelemetryOptions = {}): boolean {
     });
     sdk.start();
     _sdk = sdk;
-    // Best-effort flushing on signals.
+    // best-effort flush on shutdown signals
     for (const sig of ['SIGTERM', 'SIGINT'] as const) {
       process.once(sig, () => {
         shutdownTelemetry().catch(() => undefined);
@@ -72,9 +55,6 @@ export function initTelemetry(opts: TelemetryOptions = {}): boolean {
   }
 }
 
-/**
- * Shut down telemetry, flushing remaining spans.
- */
 export async function shutdownTelemetry(): Promise<void> {
   if (!_sdk) return;
   try {
@@ -86,15 +66,11 @@ export async function shutdownTelemetry(): Promise<void> {
   }
 }
 
-/** Get the Codexrev tracer. */
 export function getTracer(): Tracer {
   return trace.getTracer(TRACER_NAME);
 }
 
-/**
- * Convenience: run `fn` inside a span named `name`. Records exceptions
- * and re-throws.
- */
+// runs fn inside a span, records exceptions and re-throws
 export async function withSpan<T>(
   name: string,
   fn: (span: ReturnType<Tracer['startSpan']>) => Promise<T>,
@@ -119,9 +95,7 @@ export async function withSpan<T>(
   });
 }
 
-/**
- * Convenience: same as `withSpan` but synchronous-friendly (no async).
- */
+// same as withSpan but for sync work
 export function withSpanSync<T>(
   name: string,
   fn: (span: ReturnType<Tracer['startSpan']>) => T,
@@ -145,7 +119,6 @@ export function withSpanSync<T>(
   }
 }
 
-/** Convenience: add an event to the current span (if any). */
 export function recordEvent(
   name: string,
   attributes?: Record<string, string | number | boolean>,
@@ -155,7 +128,6 @@ export function recordEvent(
   span.addEvent(name, attributes);
 }
 
-/** True if telemetry is currently installed. */
 export function isTelemetryEnabled(): boolean {
   return _sdk !== null;
 }

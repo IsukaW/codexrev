@@ -1,10 +1,4 @@
-/**
- * Codexrev — `ask_user` tool.
- *
- * Allows the LLM to pause execution and ask the user a clarification
- * question when it encounters ambiguity. The tool blocks until the
- * user responds, then returns the answer as the tool result.
- */
+// Lets the LLM pause and ask the user a clarifying question, blocking until answered.
 
 import type { Tool, ToolResult } from './registry.js';
 import type { ToolDeclaration } from '../core/types.js';
@@ -43,9 +37,6 @@ const declaration: ToolDeclaration = {
   parameters: PARAMETERS,
 };
 
-/**
- * Create an `ask_user` tool bound to the given interaction channel.
- */
 export function createAskUserTool(channel: InteractionChannel): Tool {
   return {
     name: NAME,

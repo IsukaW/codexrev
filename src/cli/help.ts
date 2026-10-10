@@ -73,6 +73,9 @@ export function renderHelp(): void {
   process.stdout.write(
     `  ${green('$')} ${b('codexrev')} ${cyan('models')} ${dim('<list|add|remove|use>')}\n`,
   );
+  process.stdout.write(
+    `  ${green('$')} ${b('codexrev')} ${cyan('review scan')} ${dim('[flags]')}\n`,
+  );
 
   heading('Commands');
   process.stdout.write(
@@ -83,6 +86,9 @@ export function renderHelp(): void {
   );
   process.stdout.write(
     `  ${b(cyan('models'))}          ${'Manage AI provider models  '}${dim('(add, list, use, remove)')}\n`,
+  );
+  process.stdout.write(
+    `  ${b(cyan('review'))}          ${'Run the six-role adversarial code review pipeline  '}${dim('(scan)')}\n`,
   );
 
   const writeRow = (flag: string, arg: string, desc: string): void => {
@@ -116,6 +122,12 @@ export function renderHelp(): void {
     ['--model', '<name>', 'Model name'],
     ['--api-key', '<key>', 'Provider API key (non-interactive only)'],
     ['--base-url', '<url>', 'Provider base URL (optional)'],
+    ['--tool-calling', '', 'Model supports tool/function calling (default: provider capability)'],
+    ['--no-tool-calling', '', 'Mark the model as lacking tool/function calling'],
+    ['--vision', '', 'Model supports vision/image input (default: off)'],
+    ['--max-input-tokens', '<n>', 'Model context window size (optional)'],
+    ['--max-output-tokens', '<n>', 'Model max completion tokens (optional)'],
+    ['--timeout-ms', '<n>', 'Request timeout (default: 30 min auto for local providers)'],
     ['--reset', '', 'Replace existing config'],
     ['--non-interactive', '', 'Skip TUI wizard (CI / scripting)'],
   ];
@@ -147,13 +159,30 @@ export function renderHelp(): void {
     `  ${green('$')} ${b('codexrev')} ${cyan('models list')}${dim('                                           list all providers & models')}\n`,
   );
   process.stdout.write(
-    `  ${green('$')} ${b('codexrev')} ${cyan('models use')} ${yellow('<id>')} --provider ${yellow('<name>')}${dim('            set active model')}\n`,
+    `  ${green('$')} ${b('codexrev')} ${cyan('models use')} ${yellow('<id>')} --provider ${yellow('<name>')}${dim('            set the active model (global)')}\n`,
+  );
+  process.stdout.write(
+    `  ${green('$')} ${b('codexrev')} ${cyan('models key')} ${yellow('<provider>')}${dim('                            set a provider\'s API key')}\n`,
   );
   process.stdout.write(
     `  ${green('$')} ${b('codexrev')} ${cyan('models remove provider')} ${yellow('<name>')}${dim('                 remove a provider')}\n`,
   );
   process.stdout.write(
     `  ${green('$')} ${b('codexrev')} ${cyan('models remove model')} ${yellow('<id>')} --provider ${yellow('<name>')}${dim('     remove a model')}\n`,
+  );
+
+  heading('Changing the default / active model');
+  process.stdout.write(
+    `  ${dim('The model chosen at `codexrev init` becomes the active default. To switch it later:')}\n`,
+  );
+  process.stdout.write(
+    `  ${green('$')} ${b('codexrev')} ${cyan('models use')} ${yellow('<model-id>')} --provider ${yellow('<name>')}${dim('   persist a new default')}\n`,
+  );
+  process.stdout.write(
+    `  ${green('$')} ${b('codexrev')} ${cyan('models list')}${dim('                              show models — exactly one is marked ★')}\n`,
+  );
+  process.stdout.write(
+    `  ${green('$')} ${b('codexrev')} --model ${yellow('<model-id>')} ${cyan('"…"')}${dim('             one-shot override for a single run')}\n`,
   );
 
   heading('Models examples');
@@ -178,6 +207,16 @@ export function renderHelp(): void {
     ['--provider', '<name>', 'Provider name (for remove model, use)'],
   ];
   for (const [flag, arg, desc] of modelRows) writeRow(flag, arg, desc);
+
+  heading('Review flags (with `codexrev review scan`)');
+  const reviewRows: Array<[string, string, string]> = [
+    ['--diff', '<ref>', 'Git ref to diff against (default: staged changes)'],
+    ['--urs', '<path>', 'URS document for the BA role to check against'],
+    ['--output', '<dir>', 'Directory to write reports to'],
+    ['--fix', '', 'Attempt to fix blocking findings via Breaker-Builder'],
+    ['--max-iterations', '<n>', 'Override the fix-loop iteration cap (never above 5)'],
+  ];
+  for (const [flag, arg, desc] of reviewRows) writeRow(flag, arg, desc);
 
   heading('Learn more');
   process.stdout.write(

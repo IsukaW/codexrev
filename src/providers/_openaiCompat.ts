@@ -1,16 +1,8 @@
-/**
- * Codexrev — shared OpenAI-compatible adapter base.
- *
- * Used by every adapter that talks to an OpenAI-shaped HTTP API: the
- * real `openai` provider, plus LiteLLM, Ollama, and LM Studio. Centralising
- * the wire-format details here keeps the per-provider classes trivial
- * (they just pin the `provider` discriminator and the default base URL)
- * and avoids bugs like the old `LiteLLMGenerator.buildMessages` that
- * silently dropped `tool` messages.
- *
- * This file is intentionally NOT exported from `src/api/index.ts`. It is
- * an internal helper for the adapter subclasses.
- */
+// Shared base for every adapter hitting an OpenAI-shaped HTTP API (openai itself,
+// LiteLLM, Ollama, LM Studio). Keeps the per-provider classes down to just the
+// discriminator + default base URL, and avoids repeats of the old
+// LiteLLMGenerator.buildMessages bug that silently dropped tool messages.
+// Not exported from src/api/index.ts — internal to the adapter subclasses only.
 
 import OpenAI from 'openai';
 import type {
@@ -31,15 +23,13 @@ import { ProviderError } from '../core/types.js';
 import { LocalServerError } from '../utils/errors.js';
 
 export interface OpenAICompatOptions {
-  /** Sentinel API key used when the target server doesn't require one (e.g. local Ollama). */
+  /** sentinel key for servers that don't require one, e.g. local Ollama */
   readonly defaultApiKey: string;
-  /** Hard-coded fallback base URL when neither settings nor env supply one. */
+  /** fallback base URL when settings/env don't supply one */
   readonly defaultBaseUrl: string;
-  /** Whether `stream()` populates `usage` on `finish` events. */
   readonly supportsStreamingUsage: boolean;
-  /** Whether `tool_calls` may be emitted. */
   readonly supportsTools: boolean;
-  /** Max retries inside the OpenAI SDK. Local servers usually want 0. */
+  /** local servers usually want 0 here */
   readonly maxRetries?: number;
 }
 
@@ -61,10 +51,13 @@ export abstract class OpenAICompatGenerator implements ContentGenerator {
       apiKey: cfg.apiKey ?? opts.defaultApiKey,
       baseURL: cfg.baseUrl ?? opts.defaultBaseUrl,
       maxRetries: opts.maxRetries ?? 2,
+      // undefined here just falls back to the SDK's own 10min default, same as before
+      // this field existed (see ContentGeneratorConfig.timeoutMs for the local-model case)
+      timeout: cfg.timeoutMs,
     });
   }
 
-  /** Resolved base URL — settings → env → hard-coded default. */
+  // settings -> env -> hard-coded default
   protected resolveBaseUrl(cfg: ContentGeneratorConfig): string {
     return cfg.baseUrl ?? this.defaultBaseUrl;
   }
@@ -136,9 +129,8 @@ export abstract class OpenAICompatGenerator implements ContentGenerator {
         };
       }
 
-      // The OpenAI SDK doesn't expose a cumulative-usage hook on the
-      // incremental chunk path, so streaming usage is always undefined here.
-      // Anthropic populates it on its own adapter — see anthropic.ts.
+      // OpenAI SDK has no cumulative-usage hook on the chunk path, so this stays
+      // undefined — anthropic.ts populates it on its own adapter instead.
       const usage: UsageStats | undefined = undefined;
       const reason = mapStreamFinishReason(finishReason);
       yield { kind: 'finish', reason, usage };
@@ -147,7 +139,7 @@ export abstract class OpenAICompatGenerator implements ContentGenerator {
     }
   }
 
-  // ─── helpers ────────────────────────────────────────────────────
+  // helpers
   protected toApiParams(req: GenerateRequest): OpenAI.ChatCompletionCreateParamsNonStreaming {
     const messages: OpenAI.ChatCompletionMessageParam[] = req.messages.map(toOpenAIMessage);
     if (req.systemInstruction) {
@@ -192,8 +184,8 @@ export abstract class OpenAICompatGenerator implements ContentGenerator {
       message?: string;
       cause?: { code?: string; message?: string };
     };
-    // Translate the connection-level errors into a friendly LocalServerError so
-    // users with a missing daemon see a fix-it hint instead of a stack trace.
+    // connection-level errors get turned into LocalServerError so a missing daemon
+    // shows a fix-it hint instead of a raw stack trace
     const causeCode = e?.code ?? e?.cause?.code;
     if (
       causeCode === 'ECONNREFUSED' ||
@@ -215,7 +207,7 @@ export abstract class OpenAICompatGenerator implements ContentGenerator {
   }
 }
 
-// ─── shared helpers (also re-used by the OpenAI subclass) ─────────
+// shared helpers, also used by the OpenAI subclass
 
 function isRetryable(status?: number): boolean {
   if (!status) return true;

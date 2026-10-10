@@ -1,11 +1,5 @@
-/**
- * Codexrev — mode badge component.
- *
- * Renders a color-coded badge showing the current interaction mode.
- * Two variants:
- *   - `ModeBadge`        — full badge for the header (with hint text)
- *   - `ModeBadgeCompact` — small inline badge next to the input prompt
- */
+// Color-coded badge for the current mode — full version for the header,
+// inline version next to the prompt.
 
 import React from 'react';
 import { Box, Text } from 'ink';
@@ -16,7 +10,6 @@ interface ModeBadgeProps {
   mode: InteractionMode;
 }
 
-/** Full badge shown in the TUI header. */
 export const ModeBadge: React.FC<ModeBadgeProps> = ({ mode }) => {
   const config = MODE_CONFIG[mode];
 
@@ -31,7 +24,6 @@ export const ModeBadge: React.FC<ModeBadgeProps> = ({ mode }) => {
   );
 };
 
-/** Compact inline badge rendered next to the `>` input prompt. */
 export const ModeBadgeInline: React.FC<ModeBadgeProps> = ({ mode }) => {
   const config = MODE_CONFIG[mode];
   return (

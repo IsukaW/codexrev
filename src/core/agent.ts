@@ -1,10 +1,5 @@
-/**
- * Codexrev — high-level agent factory for programmatic use.
- *
- * Consumers get a long-lived `Agent` object that pre-wires provider +
- * tools + MCP and exposes a `send(prompt)` method returning an
- * `AgentResult` or `AsyncIterable<AgentEvent>`.
- */
+// High-level agent factory for programmatic use — wires up provider + tools + MCP
+// and hands back a long-lived Agent with send()/stream().
 
 import { buildProvider } from '../providers/index.js';
 import { createToolRegistry } from '../tools/registry.js';
@@ -15,13 +10,12 @@ import type { Settings } from '../config/schema.js';
 import { loadSettings } from '../config/loader.js';
 
 export interface AgentOptions {
-  /** Pre-resolved settings. If omitted, `loadSettings()` is called. */
+  /** pre-resolved settings; loadSettings() runs if omitted */
   settings?: Settings;
-  /** Override the provider name (e.g. 'anthropic'). */
+  /** override provider name, e.g. 'anthropic' */
   provider?: ProviderId;
-  /** Override the model name. */
+  /** override model name */
   model?: string;
-  /** Optional pre-built ContentGenerator. */
   contentGenerator?: ContentGenerator;
 }
 

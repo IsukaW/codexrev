@@ -1,9 +1,4 @@
-/**
- * Codexrev — Anthropic provider adapter.
- *
- * Wraps the official `@anthropic-ai/sdk` and normalises its responses
- * into Codexrev's `ContentGenerator` interface.
- */
+// Wraps @anthropic-ai/sdk, normalizes responses into our ContentGenerator interface.
 
 import Anthropic from '@anthropic-ai/sdk';
 import type {
@@ -75,10 +70,10 @@ export class AnthropicGenerator implements ContentGenerator {
             }
           }
         } else if (ev.type === 'content_block_stop') {
-          // nothing to do
+          // no-op
         } else if (ev.type === 'message_delta') {
           if (ev.delta.stop_reason) {
-            // Cast through `unknown` so TS doesn't narrow the local.
+            // cast through unknown, otherwise TS narrows this local too aggressively
             stopReason = ev.delta.stop_reason as unknown as typeof stopReason;
           }
           if (ev.usage) {
@@ -112,7 +107,7 @@ export class AnthropicGenerator implements ContentGenerator {
         };
       }
 
-      // Re-widen via double-cast — flow analysis collapses the union otherwise.
+      // double-cast to re-widen the union; TS's flow analysis collapses it otherwise
       const sr = stopReason as unknown as 'end_turn' | 'max_tokens' | 'tool_use' | 'stop_sequence';
       const finishReason: 'stop' | 'max_tokens' | 'tool_use' =
         sr === 'max_tokens'
@@ -130,7 +125,7 @@ export class AnthropicGenerator implements ContentGenerator {
     }
   }
 
-  // ─── helpers ────────────────────────────────────────────────────
+  // helpers
   private toApiParams(req: GenerateRequest) {
     const system = req.systemInstruction ?? '';
     const messages: Anthropic.MessageParam[] = [];

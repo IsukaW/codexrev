@@ -15,7 +15,7 @@ describe('provider registry', () => {
     }
   });
 
-  it('exposes all six configured providers', () => {
+  it('exposes all seven configured providers', () => {
     expect(PROVIDER_IDS).toEqual([
       'openai',
       'anthropic',
@@ -23,6 +23,7 @@ describe('provider registry', () => {
       'litellm',
       'ollama',
       'lmstudio',
+      'deepseek',
     ]);
   });
 
@@ -48,6 +49,14 @@ describe('provider registry', () => {
     expect(PROVIDER_REGISTRY.litellm.requiresApiKey).toBe(false);
     expect(PROVIDER_REGISTRY.ollama.requiresApiKey).toBe(false);
     expect(PROVIDER_REGISTRY.lmstudio.requiresApiKey).toBe(false);
+    expect(PROVIDER_REGISTRY.deepseek.requiresApiKey).toBe(true);
+  });
+
+  it('deepseek is registered with its cloud defaults', () => {
+    expect(PROVIDER_REGISTRY.deepseek.defaultBaseUrl).toBe('https://api.deepseek.com/v1');
+    expect(PROVIDER_REGISTRY.deepseek.envKeyVar).toBe('DEEPSEEK_API_KEY');
+    expect(PROVIDER_REGISTRY.deepseek.envBaseUrlVar).toBe('DEEPSEEK_BASE_URL');
+    expect(PROVIDER_REGISTRY.deepseek.supportsTools).toBe(true);
   });
 
   it('local providers have a defaultBaseUrl', () => {

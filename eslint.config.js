@@ -97,7 +97,7 @@ export default [
   },
   {
     // CLI entry points legitimately need console.log for user output.
-    files: ['src/cli/**/*.ts'],
+    files: ['src/cli/**/*.ts', 'src/features/*/cli/**/*.{ts,tsx}'],
     rules: {
       'no-console': 'off',
     },

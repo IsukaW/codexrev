@@ -1,17 +1,18 @@
-/**
- * Codexrev — core domain types.
- *
- * These types are the lingua franca of the agent loop. The four LLM
- * provider adapters all normalize their native request/response shapes
- * into the types defined here, so the rest of the system can stay
- * provider-agnostic.
- */
+// Core domain types shared by the agent loop — every provider adapter normalizes
+// into these so the rest of the system doesn't care which LLM it's talking to.
 
 /** Roles in a conversation. */
 export type Role = 'system' | 'user' | 'assistant' | 'tool';
 
 /** Supported LLM providers. */
-export type ProviderId = 'openai' | 'anthropic' | 'google' | 'litellm' | 'ollama' | 'lmstudio';
+export type ProviderId =
+  | 'openai'
+  | 'anthropic'
+  | 'google'
+  | 'litellm'
+  | 'ollama'
+  | 'lmstudio'
+  | 'deepseek';
 
 /** Text content part. */
 export interface TextPart {
@@ -41,6 +42,8 @@ export interface ToolResultPart {
   readonly name: string;
   readonly content: Array<TextPart | BlobPart>;
   readonly isError?: boolean;
+  /** Optional structured metadata surfaced to the UI (e.g. sandbox exec stats). */
+  readonly metadata?: Record<string, unknown>;
 }
 
 /** Discriminated union of all content parts. */
@@ -162,6 +165,9 @@ export interface ContentGeneratorConfig {
   readonly maxOutputTokens?: number;
   readonly temperature?: number;
   readonly topP?: number;
-  /** Provider-specific extras (kept open for forward-compat). */
+  // per-request timeout override (ms) — the OpenAI-compat SDK defaults to 10min fixed,
+  // which isn't enough for local models (Ollama/LM Studio) on slow hardware or under
+  // thermal throttling. leave undefined to keep the SDK default.
+  readonly timeoutMs?: number;
   readonly extras?: Readonly<Record<string, unknown>>;
 }

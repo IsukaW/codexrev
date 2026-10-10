@@ -1,9 +1,5 @@
-/**
- * Codexrev — built-in tools entry point.
- *
- * Bundled as `codexrev/tools` so consumers who only need the tool
- * implementations don't have to pull the entire CLI/TUI.
- */
+// Built-in tools entry point, published as codexrev/tools so consumers who just want
+// the tool implementations don't have to pull in the whole CLI/TUI.
 
 import type { Settings } from '../config/schema.js';
 import { builtinTools } from './builtin.js';
@@ -22,11 +18,7 @@ export {
   type WebSearchTool,
 } from './specs.js';
 
-/**
- * Convenience helper: return the list of built-in `Tool` instances for
- * a given settings object. Useful for tests, scripting, or surfacing in
- * the UI.
- */
+// list of built-in Tool instances for a settings object — used by tests, scripting, UI
 export function listTools(settings: Settings = {} as Settings): Tool[] {
   return builtinTools(settings);
 }

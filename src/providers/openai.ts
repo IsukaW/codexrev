@@ -1,11 +1,5 @@
-/**
- * Codexrev — OpenAI provider adapter.
- *
- * Thin subclass over the shared OpenAI-compatible base. Pins the
- * `provider` discriminator and the `defaultBaseUrl` from the registry;
- * all wire-format details (streaming, tool calls, finish reasons)
- * live in `_openaiCompat.ts`.
- */
+// Thin subclass over the shared base — pins the discriminator and defaultBaseUrl;
+// everything else (streaming, tool calls, finish reasons) lives in _openaiCompat.ts.
 
 import type { ContentGeneratorConfig } from '../core/types.js';
 import { OpenAICompatGenerator } from './_openaiCompat.js';

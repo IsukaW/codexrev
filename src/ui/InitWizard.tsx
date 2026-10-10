@@ -1,20 +1,23 @@
-/**
- * Codexrev — `init` subcommand interactive wizard.
- *
- * Five screens, navigated with Enter / Esc:
- *   1. Provider   (select)
- *   2. Model      (text input, prefilled)
- *   3. API key    (masked text input with "show" toggle)
- *   4. Base URL   (optional, text input)
- *   5. Confirm    (review + submit)
- */
+// `init` wizard — walks through provider, model, api key, base url, capabilities,
+// token limits, then a confirm screen. Enter to advance, Esc to bail out.
 
 import React, { useState } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import SelectInput from 'ink-select-input';
 import type { ProviderId } from '../core/types.js';
-import { PROVIDER_REGISTRY } from '../providers/registry.js';
+import { DEFAULT_LOCAL_TIMEOUT_MS, PROVIDER_REGISTRY } from '../providers/registry.js';
+
+export interface InitWizardAnswers {
+  provider: ProviderId;
+  model: string;
+  apiKey: string;
+  baseUrl?: string;
+  toolCalling: boolean;
+  vision: boolean;
+  maxInputTokens?: number;
+  maxOutputTokens?: number;
+}
 
 export interface InitWizardProps {
   initialProvider?: ProviderId;
@@ -22,20 +25,31 @@ export interface InitWizardProps {
   initialApiKey?: string;
   initialBaseUrl?: string;
   defaultModelFor: (p: ProviderId) => string;
-  onSubmit: (answers: {
-    provider: ProviderId;
-    model: string;
-    apiKey: string;
-    baseUrl?: string;
-  }) => void;
+  onSubmit: (answers: InitWizardAnswers) => void;
   onCancel: () => void;
 }
 
-type Step = 'provider' | 'model' | 'apiKey' | 'baseUrl' | 'confirm';
+type Step =
+  | 'provider'
+  | 'model'
+  | 'apiKey'
+  | 'baseUrl'
+  | 'toolCalling'
+  | 'vision'
+  | 'maxInputTokens'
+  | 'maxOutputTokens'
+  | 'confirm';
 
 const PROVIDER_CHOICES: Array<{ label: string; value: ProviderId }> = Object.values(
   PROVIDER_REGISTRY,
 ).map((meta) => ({ label: `${meta.id} — ${meta.label}`, value: meta.id }));
+
+// parses a y/N reply, blank means keep the fallback
+function parseYesNo(raw: string, fallback: boolean): boolean {
+  const v = raw.trim().toLowerCase();
+  if (v === '') return fallback;
+  return v === 'y' || v === 'yes';
+}
 
 export const InitWizard: React.FC<InitWizardProps> = (props) => {
   const [step, setStep] = useState<Step>(props.initialProvider ? 'model' : 'provider');
@@ -44,6 +58,17 @@ export const InitWizard: React.FC<InitWizardProps> = (props) => {
   const [apiKey, setApiKey] = useState<string>(props.initialApiKey ?? '');
   const [baseUrl, setBaseUrl] = useState<string>(props.initialBaseUrl ?? '');
   const [showKey, setShowKey] = useState(false);
+
+  // toolCalling starts at whatever the registry says this provider supports; vision just defaults off
+  const [toolCalling, setToolCalling] = useState<boolean>(
+    props.initialProvider ? PROVIDER_REGISTRY[props.initialProvider].supportsTools : true,
+  );
+  const [toolCallingInput, setToolCallingInput] = useState('');
+  const [vision, setVision] = useState(false);
+  const [visionInput, setVisionInput] = useState('');
+  const [maxInputTokens, setMaxInputTokens] = useState('');
+  const [maxOutputTokens, setMaxOutputTokens] = useState('');
+  const [error, setError] = useState('');
 
   const { exit } = useApp();
 
@@ -56,14 +81,14 @@ export const InitWizard: React.FC<InitWizardProps> = (props) => {
       props.onCancel();
     }
   });
-  // unused-but-imported: keep `exit` reachable for future abort UX
-  void exit;
+  void exit; // keep the import used, might need it for a hard-abort path later
+
+  const toolDefault = provider ? PROVIDER_REGISTRY[provider].supportsTools : true;
 
   function submit() {
     if (!provider) return;
     const meta = PROVIDER_REGISTRY[provider];
-    // For local providers (Ollama, LM Studio, LiteLLM) substitute a
-    // sentinel so the encrypted config still has *something* to seal.
+    // local providers don't need a real key, fall back to the provider id so we still have something to encrypt
     const resolvedKey =
       apiKey.trim() || (meta.requiresApiKey ? '' : meta.id);
     props.onSubmit({
@@ -71,6 +96,10 @@ export const InitWizard: React.FC<InitWizardProps> = (props) => {
       model: model.trim(),
       apiKey: resolvedKey,
       ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}),
+      toolCalling,
+      vision,
+      ...(maxInputTokens.trim() ? { maxInputTokens: parseInt(maxInputTokens.trim(), 10) } : {}),
+      ...(maxOutputTokens.trim() ? { maxOutputTokens: parseInt(maxOutputTokens.trim(), 10) } : {}),
     });
   }
 
@@ -91,6 +120,7 @@ export const InitWizard: React.FC<InitWizardProps> = (props) => {
             onSelect={(item) => {
               setProvider(item.value);
               if (!model) setModel(props.defaultModelFor(item.value));
+              setToolCalling(PROVIDER_REGISTRY[item.value].supportsTools);
               setStep('model');
             }}
           />
@@ -155,11 +185,95 @@ export const InitWizard: React.FC<InitWizardProps> = (props) => {
           <Text>Base URL (optional — Enter to skip):</Text>
           <Box>
             <Text color="green">{'> '}</Text>
-            <TextInput value={baseUrl} onChange={setBaseUrl} onSubmit={() => setStep('confirm')} />
+            <TextInput value={baseUrl} onChange={setBaseUrl} onSubmit={() => setStep('toolCalling')} />
           </Box>
           <Text dimColor>
             e.g. http://localhost:11434/v1 for ollama, http://localhost:1234/v1 for lm studio, http://localhost:4000 for litellm
           </Text>
+        </Box>
+      )}
+
+      {step === 'toolCalling' && provider && (
+        <Box flexDirection="column">
+          <Text>Does this model support tool/function calling? (Y/n):</Text>
+          <Box>
+            <Text color="green">{'> '}</Text>
+            <TextInput
+              value={toolCallingInput}
+              onChange={setToolCallingInput}
+              onSubmit={(v) => {
+                setToolCalling(parseYesNo(v, toolDefault));
+                setToolCallingInput('');
+                setStep('vision');
+              }}
+            />
+          </Box>
+          <Text dimColor>default: {toolDefault ? 'yes' : 'no'} (Enter to accept)</Text>
+        </Box>
+      )}
+
+      {step === 'vision' && provider && (
+        <Box flexDirection="column">
+          <Text>Does this model support vision/image input? (y/N):</Text>
+          <Box>
+            <Text color="green">{'> '}</Text>
+            <TextInput
+              value={visionInput}
+              onChange={setVisionInput}
+              onSubmit={(v) => {
+                setVision(parseYesNo(v, false));
+                setVisionInput('');
+                setStep('maxInputTokens');
+              }}
+            />
+          </Box>
+          <Text dimColor>default: no (Enter to accept)</Text>
+        </Box>
+      )}
+
+      {step === 'maxInputTokens' && provider && (
+        <Box flexDirection="column">
+          <Text>Max input tokens / context window (Enter to skip):</Text>
+          <Box>
+            <Text color="green">{'> '}</Text>
+            <TextInput
+              value={maxInputTokens}
+              onChange={(v) => { setMaxInputTokens(v); setError(''); }}
+              onSubmit={(v) => {
+                if (v.trim() && !Number.isFinite(parseInt(v.trim(), 10))) {
+                  setError('Please enter a number.');
+                  return;
+                }
+                setMaxInputTokens(v.trim());
+                setStep('maxOutputTokens');
+              }}
+            />
+          </Box>
+          {error && <Text color="red">{error}</Text>}
+          <Text dimColor>e.g. 128000, 200000</Text>
+        </Box>
+      )}
+
+      {step === 'maxOutputTokens' && provider && (
+        <Box flexDirection="column">
+          <Text>Max output tokens (Enter to skip):</Text>
+          <Box>
+            <Text color="green">{'> '}</Text>
+            <TextInput
+              value={maxOutputTokens}
+              onChange={(v) => { setMaxOutputTokens(v); setError(''); }}
+              onSubmit={(v) => {
+                if (v.trim() && !Number.isFinite(parseInt(v.trim(), 10))) {
+                  setError('Please enter a number.');
+                  return;
+                }
+                setMaxOutputTokens(v.trim());
+                setStep('confirm');
+              }}
+            />
+          </Box>
+          {error && <Text color="red">{error}</Text>}
+          <Text dimColor>e.g. 4096, 8192</Text>
         </Box>
       )}
 
@@ -179,6 +293,22 @@ export const InitWizard: React.FC<InitWizardProps> = (props) => {
             <Text>
               apiKey: <Text color="cyan">{showKey ? apiKey : '•'.repeat(Math.min(apiKey.length, 24))}</Text>
             </Text>
+            <Text>
+              tool calling: <Text color="cyan">{toolCalling ? 'yes' : 'no'}</Text>
+            </Text>
+            <Text>
+              vision: <Text color="cyan">{vision ? 'yes' : 'no'}</Text>
+            </Text>
+            <Text>
+              tokens: <Text color="cyan">
+                {maxInputTokens.trim() || '(default)'} in / {maxOutputTokens.trim() || '(default)'} out
+              </Text>
+            </Text>
+            {!PROVIDER_REGISTRY[provider].requiresApiKey && (
+              <Text dimColor>
+                (local provider — request timeout auto-set to {DEFAULT_LOCAL_TIMEOUT_MS / 60_000} min)
+              </Text>
+            )}
           </Box>
           <Box marginTop={1}>
             <Text>Press Enter to write the encrypted config, Esc to cancel.</Text>

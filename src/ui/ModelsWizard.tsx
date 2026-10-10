@@ -1,23 +1,5 @@
-/**
- * Codexrev — `models add` interactive wizard.
- *
- * Step-by-step TUI for adding providers and models to the multi-provider
- * registry. Detects existing providers and skips redundant prompts.
- *
- * Flow:
- *   1. Mode        (select: new provider / add to existing)
- *   2. Provider    (text, for new providers)
- *   3. Vendor      (select, for new providers)
- *   4. Base URL    (text, for new providers — required for customendpoint)
- *   5. API Key     (masked text, for new providers — skip for local)
- *   6. Model ID    (text)
- *   7. Display name (text, defaults to ID)
- *   8. Capabilities (y/N for tool-calling, vision)
- *   9. Token limits (text, optional)
- *  10. Model URL   (text, optional)
- *  11. Confirm     (review + submit)
- *  12. Continue?   (add another model?)
- */
+// `models add` wizard — adds a provider+model or a model on an existing provider.
+// Skips the provider/vendor/base-url/key steps entirely when reusing an existing one.
 
 import React, { useState } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
@@ -25,19 +7,17 @@ import TextInput from 'ink-text-input';
 import SelectInput from 'ink-select-input';
 import type { ProviderConfigEntry } from '../config/projectSchema.js';
 
-// ── Types ───────────────────────────────────────────────────────────
-
 export type VendorType = ProviderConfigEntry['vendor'];
 
 export interface ModelWizardResult {
-  /** undefined means "add to existing provider" */
+  // unset means "add to existing provider"
   newProvider?: {
     name: string;
     vendor: VendorType;
     baseUrl?: string;
     apiKey?: string;
   };
-  /** Existing provider name (when adding model to existing) */
+  // set when adding a model to an existing provider instead
   existingProvider?: string;
   model: {
     id: string;
@@ -56,8 +36,6 @@ export interface ModelsWizardProps {
   onCancel: () => void;
 }
 
-// ── Vendor choices ──────────────────────────────────────────────────
-
 const VENDOR_CHOICES: Array<{ label: string; value: VendorType }> = [
   { label: 'openai — OpenAI', value: 'openai' },
   { label: 'anthropic — Anthropic', value: 'anthropic' },
@@ -65,6 +43,7 @@ const VENDOR_CHOICES: Array<{ label: string; value: VendorType }> = [
   { label: 'ollama — Ollama (local)', value: 'ollama' },
   { label: 'lmstudio — LM Studio (local)', value: 'lmstudio' },
   { label: 'litellm — LiteLLM', value: 'litellm' },
+  { label: 'deepseek — DeepSeek', value: 'deepseek' },
   { label: 'customendpoint — Custom OpenAI-compatible', value: 'customendpoint' },
 ];
 
@@ -76,10 +55,9 @@ const VENDOR_LABELS: Record<VendorType, string> = {
   ollama: 'Ollama',
   lmstudio: 'LM Studio',
   litellm: 'LiteLLM',
+  deepseek: 'DeepSeek',
   customendpoint: 'Custom Endpoint',
 };
-
-// ── Step type ───────────────────────────────────────────────────────
 
 type Step =
   | 'mode'
@@ -98,14 +76,11 @@ type Step =
   | 'confirm'
   | 'continue';
 
-// ── Component ───────────────────────────────────────────────────────
-
 export const ModelsWizard: React.FC<ModelsWizardProps> = (props) => {
-  // ── State ──
   const [step, setStep] = useState<Step>('mode');
   const [mode, setMode] = useState<'new' | 'existing'>('new');
 
-  // Provider fields (for new provider)
+  // fields below only matter when mode === 'new'
   const [providerName, setProviderName] = useState('');
   const [vendor, setVendor] = useState<VendorType>('openai');
   const [baseUrl, setBaseUrl] = useState('');
@@ -113,7 +88,6 @@ export const ModelsWizard: React.FC<ModelsWizardProps> = (props) => {
   const [showKey, setShowKey] = useState(false);
   const [existingName, setExistingName] = useState('');
 
-  // Model fields
   const [modelId, setModelId] = useState('');
   const [modelName, setModelName] = useState('');
   const [toolCalling, setToolCalling] = useState(false);
@@ -125,7 +99,6 @@ export const ModelsWizard: React.FC<ModelsWizardProps> = (props) => {
   const [modelUrl, setModelUrl] = useState('');
   const [continueInput, setContinueInput] = useState('');
 
-  // Validation errors
   const [error, setError] = useState('');
 
   const { exit } = useApp();
@@ -141,13 +114,11 @@ export const ModelsWizard: React.FC<ModelsWizardProps> = (props) => {
     }
   });
 
-  // ── Existing provider choices ──
   const existingChoices = props.existingProviders.map((p) => ({
     label: `${p.name}  (${VENDOR_LABELS[p.vendor]})  ${p.models.length} model(s)`,
     value: p.name,
   }));
 
-  // ── Submit ──
   function submit() {
     const result: ModelWizardResult = {
       model: {
@@ -173,11 +144,9 @@ export const ModelsWizard: React.FC<ModelsWizardProps> = (props) => {
     props.onSubmit(result);
   }
 
-  // ── Helpers ──
   const dim = (s: string) => <Text dimColor>{s}</Text>;
   const label = (s: string) => <Text bold color="cyan">{s}</Text>;
 
-  // ── Render ──
   return (
     <Box flexDirection="column" paddingX={1}>
       <Box marginBottom={1}>
@@ -185,7 +154,6 @@ export const ModelsWizard: React.FC<ModelsWizardProps> = (props) => {
         <Text dimColor> — add a provider and/or model interactively.</Text>
       </Box>
 
-      {/* ── Step 1: Mode ── */}
       {step === 'mode' && (
         <Box flexDirection="column">
           <Text>What do you want to do?</Text>
@@ -211,7 +179,6 @@ export const ModelsWizard: React.FC<ModelsWizardProps> = (props) => {
         </Box>
       )}
 
-      {/* ── Step 1b: Existing provider picker ── */}
       {step === 'existingPicker' && (
         <Box flexDirection="column">
           <Text>Select provider:</Text>
@@ -225,7 +192,6 @@ export const ModelsWizard: React.FC<ModelsWizardProps> = (props) => {
         </Box>
       )}
 
-      {/* ── Step 2: Provider name ── */}
       {step === 'providerName' && (
         <Box flexDirection="column">
           <Text>Provider name:</Text>
@@ -251,7 +217,6 @@ export const ModelsWizard: React.FC<ModelsWizardProps> = (props) => {
         </Box>
       )}
 
-      {/* ── Step 3: Vendor ── */}
       {step === 'vendor' && (
         <Box flexDirection="column">
           <Text>
@@ -271,7 +236,6 @@ export const ModelsWizard: React.FC<ModelsWizardProps> = (props) => {
         </Box>
       )}
 
-      {/* ── Step 4: Base URL ── */}
       {step === 'baseUrl' && (
         <Box flexDirection="column">
           <Text>
@@ -297,7 +261,6 @@ export const ModelsWizard: React.FC<ModelsWizardProps> = (props) => {
         </Box>
       )}
 
-      {/* ── Step 5: API Key ── */}
       {step === 'apiKey' && (
         <Box flexDirection="column">
           <Text>API key (optional — Enter to skip):</Text>
@@ -313,7 +276,6 @@ export const ModelsWizard: React.FC<ModelsWizardProps> = (props) => {
         </Box>
       )}
 
-      {/* ── Step 6: Model ID ── */}
       {step === 'modelId' && (
         <Box flexDirection="column">
           <Text>
@@ -340,7 +302,6 @@ export const ModelsWizard: React.FC<ModelsWizardProps> = (props) => {
         </Box>
       )}
 
-      {/* ── Step 7: Display name ── */}
       {step === 'modelName' && (
         <Box flexDirection="column">
           <Text>Display name (Enter to use &quot;{modelId}&quot;):</Text>
@@ -358,7 +319,6 @@ export const ModelsWizard: React.FC<ModelsWizardProps> = (props) => {
         </Box>
       )}
 
-      {/* ── Step 8a: Tool calling ── */}
       {step === 'toolCalling' && (
         <Box flexDirection="column">
           <Text>Supports tool/function calling? (y/N):</Text>
@@ -377,7 +337,6 @@ export const ModelsWizard: React.FC<ModelsWizardProps> = (props) => {
         </Box>
       )}
 
-      {/* ── Step 8b: Vision ── */}
       {step === 'vision' && (
         <Box flexDirection="column">
           <Text>Supports vision/image input? (y/N):</Text>
@@ -396,7 +355,6 @@ export const ModelsWizard: React.FC<ModelsWizardProps> = (props) => {
         </Box>
       )}
 
-      {/* ── Step 9a: Max input tokens ── */}
       {step === 'maxInputTokens' && (
         <Box flexDirection="column">
           <Text>Max input tokens (Enter to skip):</Text>
@@ -420,7 +378,6 @@ export const ModelsWizard: React.FC<ModelsWizardProps> = (props) => {
         </Box>
       )}
 
-      {/* ── Step 9b: Max output tokens ── */}
       {step === 'maxOutputTokens' && (
         <Box flexDirection="column">
           <Text>Max output tokens (Enter to skip):</Text>
@@ -443,7 +400,6 @@ export const ModelsWizard: React.FC<ModelsWizardProps> = (props) => {
         </Box>
       )}
 
-      {/* ── Step 10: Model URL ── */}
       {step === 'modelUrl' && (
         <Box flexDirection="column">
           <Text>Model-specific URL (Enter to skip):</Text>
@@ -459,7 +415,6 @@ export const ModelsWizard: React.FC<ModelsWizardProps> = (props) => {
         </Box>
       )}
 
-      {/* ── Step 11: Confirm ── */}
       {step === 'confirm' && (
         <Box flexDirection="column">
           <Text bold>Review:</Text>
@@ -505,7 +460,6 @@ export const ModelsWizard: React.FC<ModelsWizardProps> = (props) => {
         </Box>
       )}
 
-      {/* ── Step 12: Continue ── */}
       {step === 'continue' && (
         <Box flexDirection="column">
           <Text color="green">✓ Saved!</Text>
@@ -530,8 +484,7 @@ export const ModelsWizard: React.FC<ModelsWizardProps> = (props) => {
                   setError('');
                   setStep('modelId');
                 } else {
-                  // Final submit — this shouldn't happen since submit already fired
-                  // but just in case the component stays mounted
+                  // submit already fired, nothing to do here unless the component stays mounted
                 }
               }}
             />
