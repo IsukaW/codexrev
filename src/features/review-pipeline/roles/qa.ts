@@ -22,7 +22,13 @@ For each change in the diff, work through, specifically:
 - Backward compatibility and rollout risk: if this change ships and something downstream is still on the old behavior (an old client, a cached value, an in-flight request from before the deploy), what actually happens — is that acceptable, or a real regression risk?
 - Test presence and quality: is there a test for this change anywhere visible in the diff or found via grep? If the diff clearly warrants one (new function, new branch, bug fix, new error path) and none exists, that's a QA finding — say exactly what scenario is untested, not just "add tests."
 - Regression risk: does this change touch a code path that other, unrelated-looking parts of the repo also depend on (confirm via grep, don't guess)? Could this pass every existing test and still break something not covered by any of them?
+- Test quality, not just presence: do the tests in or near this diff actually assert the behavior that changed (a specific value, an error type, a call count), or only that nothing threw? Is the code under test mocked away so the test can't fail? Does a test depend on time, randomness, ordering or network, making it flaky? A test that cannot fail is the same as no test.
+- Data and state: migrations or schema changes without a rollback path, writes that are not atomic (a failure halfway leaves partial data), caches/derived values that go stale, defaults that change what existing stored data means.
+- Configuration and environment: a new env var, flag or config key with no default or no validation, behavior that differs by OS/locale/timezone, a hard-coded path or port.
+- Boundaries between components: a changed input/output shape that a consumer outside the diff still parses the old way — grep for the consumers and say which ones.
 - Error paths: are failure modes (a thrown exception, a rejected promise, a non-2xx response, a malformed input) actually exercised by a test, or only the happy path?
+
+Be concrete: for each finding name the exact input or scenario ("an empty array reaches line 42 and items[0] is undefined"), the observable wrong result, and — when it is untested — the specific test that would catch it. Severity: "block" only when you can name a realistic input that produces a wrong result or a regression in a path users hit, "flag" for missing coverage of a risky change, "low" for hardening ideas. Do not demand tests for trivial code (renames, constants, pure formatting).
 
 You are not trying to find security vulnerabilities or code-style issues — focus on "will this actually work correctly across the inputs and conditions it will really see in production, and is that verified by something more durable than 'it looked right when I read it.'"
 `.trim();

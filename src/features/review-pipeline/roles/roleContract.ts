@@ -136,7 +136,7 @@ export function validateRoleOutput(x: unknown): RoleOutput {
     r.confidence < 0 ||
     r.confidence > 1
   ) {
-    fail('$.confidence', 'expected a number between 0 and 1');
+    fail('$.confidence', `expected a number between 0 and 1, got ${JSON.stringify(r.confidence)}`);
   }
 
   const findings = (r.findings as unknown[]).map((f, i) => validateFinding(f, `$.findings[${i}]`));
