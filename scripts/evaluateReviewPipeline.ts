@@ -66,6 +66,8 @@ function argValue(flag: string, fallback: string): string {
   return i !== -1 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
 }
 
+// --only <substring>: run just the fixtures whose name contains it (case-insensitive), skipping the convergence run — for fast iteration
+const onlyFilter = argValue('--only', '').toLowerCase();
 const providerId = argValue('--provider', 'ollama') as ProviderId;
 const modelName = argValue('--model', providerId === 'ollama' ? 'gemma4:12b-mlx' : DEFAULT_SETTINGS.model);
 
@@ -142,13 +144,17 @@ async function main(): Promise<void> {
   // was the actual bug this rewrite fixes: an incomplete/errored
   // pipeline run used to read back as "all roles passed").
   const outcomes: FixtureRunOutcome[] = [];
-  for (const fixture of DETECTION_FIXTURES) {
+  const selected = onlyFilter ? DETECTION_FIXTURES.filter((f) => f.name.toLowerCase().includes(onlyFilter)) : DETECTION_FIXTURES;
+  if (onlyFilter && selected.length === 0) throw new Error(`--only "${onlyFilter}" matched no fixture`);
+  for (const fixture of selected) {
     console.log(`Running: ${fixture.name}...`);
     try {
       const r = await runDetectionFixture(fixture, providerId, modelName);
       outcomes.push({ fixture, result: r });
       const verdict = r.flagged ? `flagged by [${r.flaggedBy.join(', ')}]` : 'all roles passed';
-      console.log(`  → ${verdict} (${fmtMs(r.latencyMs)})\n`);
+      console.log(`  → ${verdict}; Resolver: ${r.decision} (score ${r.score.toFixed(2)}) (${fmtMs(r.latencyMs)})`);
+      for (const d of r.details) console.log(`    ${d}`);
+      console.log('');
     } catch (err) {
       const message = (err as Error).message ?? String(err);
       outcomes.push({ fixture, error: message });
@@ -156,10 +162,11 @@ async function main(): Promise<void> {
     }
   }
 
-  console.log('Running: Breaker-Builder convergence...');
+  console.log(onlyFilter ? 'Skipping Breaker-Builder convergence (--only)' : 'Running: Breaker-Builder convergence...');
   let convergence: ConvergenceResult | undefined;
   let convergenceError: string | undefined;
   try {
+    if (onlyFilter) throw new Error('skipped (--only)');
     convergence = await runConvergenceFixture();
     console.log(`  → ${convergence.outcome}: ${convergence.deterministicFixes} deterministic, ${convergence.llmFixes} LLM (${fmtMs(convergence.latencyMs)})\n`);
   } catch (err) {
@@ -173,7 +180,10 @@ async function main(): Promise<void> {
   const cleanCases = detectionResults.filter((r) => r.fixture.expectRole === null);
   const truePositives = vulnCases.filter((r) => r.flagged).length;
   const accuracy = vulnCases.length > 0 ? truePositives / vulnCases.length : NaN;
-  const falsePositives = cleanCases.filter((r) => r.flagged).length;
+  const caughtByExpected = vulnCases.filter((r) => r.caughtByExpected).length;
+  const strictAccuracy = vulnCases.length > 0 ? caughtByExpected / vulnCases.length : NaN;
+  const falsePositives = cleanCases.filter((r) => r.decision !== 'approve').length; // judged on the Resolver's real decision, not on any single role's flag
+  const noisyClean = cleanCases.filter((r) => r.flagged).length;
   const falsePositiveRate = cleanCases.length > 0 ? falsePositives / cleanCases.length : NaN;
   const avgLatencyMs =
     detectionResults.length > 0 ? detectionResults.reduce((sum, r) => sum + r.latencyMs, 0) / detectionResults.length : NaN;
@@ -196,6 +206,8 @@ async function main(): Promise<void> {
   lines.push('| Metric | Value |');
   lines.push('|---|---|');
   lines.push(`| Detection accuracy | ${truePositives}/${vulnCases.length} (${isNaN(accuracy) ? 'n/a' : `${(accuracy * 100).toFixed(0)}%`}) |`);
+  lines.push(`| Detection by the *expected* role | ${caughtByExpected}/${vulnCases.length} (${isNaN(strictAccuracy) ? 'n/a' : `${(strictAccuracy * 100).toFixed(0)}%`}) |`);
+  lines.push(`| Clean cases with any role flag (noise, not a failed review) | ${noisyClean}/${cleanCases.length} |`);
   lines.push(`| False-positive rate | ${falsePositives}/${cleanCases.length} (${isNaN(falsePositiveRate) ? 'n/a' : `${(falsePositiveRate * 100).toFixed(0)}%`}) |`);
   lines.push(`| Avg. latency per full six-role scan | ${isNaN(avgLatencyMs) ? 'n/a' : fmtMs(avgLatencyMs)} (target: ≤5 min) |`);
   lines.push(
@@ -204,10 +216,10 @@ async function main(): Promise<void> {
   lines.push('');
   lines.push('## Per-fixture detail');
   lines.push('');
-  lines.push('| Fixture | Expected role | Flagged? | Flagged by | Latency |');
-  lines.push('|---|---|---|---|---|');
+  lines.push('| Fixture | Expected role | Flagged? | Expected role caught it? | Flagged by | Resolver decision | Latency |');
+  lines.push('|---|---|---|---|---|---|---|');
   for (const r of detectionResults) {
-    lines.push(`| ${r.fixture.name} | ${r.fixture.expectRole ?? '(none — clean baseline)'} | ${r.flagged ? 'yes' : 'no'} | ${r.flaggedBy.join(', ') || '—'} | ${fmtMs(r.latencyMs)} |`);
+    lines.push(`| ${r.fixture.name} | ${r.fixture.expectRole ?? '(none — clean baseline)'} | ${r.flagged ? 'yes' : 'no'} | ${r.fixture.expectRole === null ? 'n/a' : r.caughtByExpected ? 'yes' : 'NO'} | ${r.flaggedBy.join(', ') || '—'} | ${r.decision} (${r.score.toFixed(2)}) | ${fmtMs(r.latencyMs)} |`);
   }
   lines.push('');
   if (convergence) {
