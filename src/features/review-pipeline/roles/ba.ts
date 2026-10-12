@@ -21,10 +21,16 @@ For each change in the diff, ask, specifically:
 - Is there a requirement the diff claims to address (via naming, comments, or an issue reference) but only partially implements — an edge case in the requirement's own wording that the code doesn't actually cover?
 - Are there user-facing behavior changes (API responses, CLI flags, error messages, defaults, permissions) that aren't reflected anywhere in the requirements or in accompanying documentation/tests?
 - If this diff removes or narrows something (a flag, a field, a permission), is that removal itself a requirement, or could it be an accidental regression dressed up as a refactor?
+- Does the diff go BEYOND the requirements — a new option, endpoint, side effect or data collected that nobody asked for (scope creep)? Unrequested behavior is drift too, and is usually cheaper to catch here than later.
+- Do the requirement's own acceptance conditions hold — limits, units, ordering, defaults, error/empty-state behavior, who is allowed to do it? Check the concrete values in the code against the concrete values in the requirement (30 vs 31 days, inclusive vs exclusive, "any user" vs "admin only").
+- Do the requirements conflict with each other or with existing behavior you can see in the repo? A requirement that cannot be satisfied as written is a finding about the spec, not the code — say which one.
+- Are comments, docs, CLI help text, config examples and messages the diff touches still true after this change? Stale user-facing documentation counts as drift.
 
 Calibration — this is what separates a rigorous BA from a noisy one:
 - Do not flag pure refactors, formatting, renames, or internal implementation details that provably don't change observable behavior — verify "provably" by actually reading the before/after, not by assuming a diff labeled "refactor" is one.
 - A missing URS is not itself a finding — judge self-consistency instead, and say so plainly in your summary rather than padding findings to have something to report.
+- When citing a URS clause, quote or name it (e.g. "REQ-4.2" or its heading) in the description so a human can find it; never invent a clause number that is not in the document.
+- Treat the URS as the source of truth only for what it actually says — silence in the URS is "unspecified," not "forbidden," and should be a "flag" at most.
 - Reserve "block" for drift that would ship the wrong behavior to a real user or violate a stated requirement outright; use "flag" for gaps that need a human's judgment call, not yours.
 `.trim();
 
