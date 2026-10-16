@@ -40,7 +40,10 @@ interface RoleLogEntry {
 
 interface FixLogEntry {
   readonly key: string;
-  readonly kind: 'iteration' | 'candidate' | 'attempt' | 'rerun';
+  readonly kind: 'iteration' | 'candidate' | 'attempt' | 'rerun' | 'status';
+  readonly message?: string;
+  /** an 'attempt' that belongs to the same fix as the attempt right before it */
+  readonly continuation?: boolean;
   readonly iteration?: number;
   readonly blockingCount?: number;
   readonly candidate?: FixCandidate;
@@ -189,24 +192,36 @@ const FixLogLine: React.FC<{ entry: FixLogEntry }> = ({ entry }) => {
   if (entry.kind === 'iteration') {
     return (
       <Text bold dimColor>
-        — Fix iteration {entry.iteration} ({entry.blockingCount} blocking finding{entry.blockingCount === 1 ? '' : 's'}) —
+        — Fix iteration {entry.iteration} ({entry.blockingCount} finding{entry.blockingCount === 1 ? '' : 's'} to fix) —
       </Text>
     );
   }
   if (entry.kind === 'candidate' && entry.candidate) {
+    if (entry.continuation) return <Text color="yellow" dimColor>{'     ↳ '}{entry.candidate.finding.file}</Text>;
     return (
-      <Text color="yellow" dimColor>
-        💡 [LLM] {entry.candidate.finding.file} — {entry.candidate.description} (proposed)
-      </Text>
+      <Box flexDirection="column">
+        <Text color="yellow" dimColor>
+          💡 [LLM] {entry.candidate.description} (proposed)
+        </Text>
+        <Text color="yellow" dimColor>{'     ↳ '}{entry.candidate.finding.file}</Text>
+      </Box>
     );
   }
   if (entry.kind === 'attempt' && entry.record) {
     const stageLabel = entry.record.fixerStage === 'deterministic' ? 'deterministic' : 'LLM';
+    // later edits of the same multi-file fix only show their file
+    if (entry.continuation) return <Text color="cyan">{'     ↳ '}{entry.record.file}</Text>;
     return (
-      <Text color="cyan">
-        🔧 [{stageLabel}] {entry.record.file} — {entry.record.description} (applied)
-      </Text>
+      <Box flexDirection="column">
+        <Text color="cyan">
+          🔧 [{stageLabel}] {entry.record.description} (applied)
+        </Text>
+        <Text color="cyan">{'     ↳ '}{entry.record.file}</Text>
+      </Box>
     );
+  }
+  if (entry.kind === 'status' && entry.message) {
+    return <Text dimColor>… {entry.message}</Text>;
   }
   if (entry.kind === 'rerun' && entry.output) {
     return <RoleLine entry={{ role: entry.output.role, status: entry.output.verdict, summary: entry.output.summary }} />;
@@ -248,15 +263,41 @@ export const ReviewSessionView: React.FC<ReviewSessionViewProps> = ({ events, in
         // batch gate — so the user still watches each one arrive live,
         // just without an approval interruption per fix.
         if (event.candidate.fixerStage === 'llm') {
-          setFixLog((prev) => [
-            ...prev,
-            { key: `candidate-${event.candidate.finding.id}`, kind: 'candidate', candidate: event.candidate },
-          ]);
+          setFixLog((prev) => {
+            const last = prev[prev.length - 1];
+            const continuation = last?.kind === 'candidate' && last.candidate?.description === event.candidate.description;
+            return [
+              ...prev,
+              {
+                key: `candidate-${event.candidate.finding.id}-${event.candidate.finding.file}-${prev.length}`,
+                kind: 'candidate',
+                candidate: event.candidate,
+                continuation,
+              },
+            ];
+          });
         }
       } else if (event.type === 'fix_batch_ready') {
         setPendingBatch(event.candidates);
       } else if (event.type === 'fix_attempt') {
-        setFixLog((prev) => [...prev, { key: `attempt-${event.record.findingId}-${event.record.iteration}`, kind: 'attempt', record: event.record }]);
+        setFixLog((prev) => {
+          const last = prev[prev.length - 1];
+          const continuation =
+            last?.kind === 'attempt' &&
+            last.record?.iteration === event.record.iteration &&
+            last.record?.description === event.record.description;
+          return [
+            ...prev,
+            {
+              key: `attempt-${event.record.findingId}-${event.record.iteration}-${event.record.file}-${prev.length}`,
+              kind: 'attempt',
+              record: event.record,
+              continuation,
+            },
+          ];
+        });
+      } else if (event.type === 'fix_status') {
+        setFixLog((prev) => [...prev, { key: `status-${prev.length}`, kind: 'status', message: event.message }]);
       } else if (event.type === 'fix_role_rerun') {
         setFixLog((prev) => [...prev, { key: `rerun-${event.output.role}-${prev.length}`, kind: 'rerun', output: event.output }]);
       }
@@ -319,7 +360,9 @@ export const ReviewSessionView: React.FC<ReviewSessionViewProps> = ({ events, in
           {gate && isFixBatchGate && (
             <Box flexDirection="column">
               {detailsFor === gate.stage &&
-                pendingBatch.map((candidate) => <FixDiffBlock key={candidate.finding.id} candidate={candidate} />)}
+                pendingBatch.map((candidate, i) => (
+                  <FixDiffBlock key={`${candidate.finding.id}-${candidate.finding.file}-${i}`} candidate={candidate} />
+                ))}
               <StageGatePrompt request={gate} onDecision={handleDecision} />
             </Box>
           )}

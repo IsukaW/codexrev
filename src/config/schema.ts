@@ -59,6 +59,28 @@ export interface ReviewPipelineSettings {
   // capped at MAX_FIX_ITERATIONS_CEILING regardless of config, see validateReviewPipelineSettings().
   // not the same knob as maxFixAttempts above — that's the older Agent-mode fix loop.
   maxFixIterations: number;
+  /**
+   * 'robust' (default): `--fix` uses a tool-using fixer that can change several files and add tests,
+   * tries every fix in a temporary copy of the project (rejecting it if it breaks the build or
+   * previously-passing tests), and ends with a full six-role re-check of the final code.
+   * 'classic': the original single-edit fixer, applied straight to the project, with only the
+   * blocking roles re-run — faster, but its final verdict can disagree with a fresh scan.
+   */
+  fixStrategy?: 'robust' | 'classic';
+  /** how long one test run inside the temporary copy may take before it counts as inconclusive (default 300000) */
+  fixTestTimeoutMs?: number;
+  /**
+   * false (default): new test files the fixer writes are only used to verify the fix in the temporary
+   * copy and are discarded; only production changes (and edits to already-existing tests) are applied.
+   * true: keep them in your project.
+   */
+  fixKeepNewTests?: boolean;
+  /**
+   * Which decision makes `codexrev review scan` exit non-zero (and so stop a CI/automation pipeline).
+   * 'request_changes' (default): anything short of Approve fails. 'block': only Block fails — Request
+   * Changes (advisory findings) still prints and reports everything, but exits 0 so the pipeline continues.
+   */
+  failOn?: 'request_changes' | 'block';
 }
 
 // never exceed 5 Breaker-Builder iterations, per the proposal's NFRs
@@ -73,6 +95,15 @@ export function validateReviewPipelineSettings(rp: ReviewPipelineSettings): void
   }
   if (rp.maxFixIterations < 1) {
     throw new ConfigError('reviewPipeline.maxFixIterations must be at least 1.');
+  }
+  if (rp.fixStrategy !== undefined && rp.fixStrategy !== 'robust' && rp.fixStrategy !== 'classic') {
+    throw new ConfigError("reviewPipeline.fixStrategy must be 'robust' or 'classic'.");
+  }
+  if (rp.failOn !== undefined && rp.failOn !== 'request_changes' && rp.failOn !== 'block') {
+    throw new ConfigError("reviewPipeline.failOn must be 'request_changes' or 'block'.");
+  }
+  if (rp.fixTestTimeoutMs !== undefined && (!Number.isFinite(rp.fixTestTimeoutMs) || rp.fixTestTimeoutMs < 1000)) {
+    throw new ConfigError('reviewPipeline.fixTestTimeoutMs must be at least 1000 (milliseconds).');
   }
   const weights = rp.resolverWeights;
   for (const [role, weight] of Object.entries(weights)) {

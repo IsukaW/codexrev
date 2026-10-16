@@ -154,6 +154,25 @@ function formatFileForPrompt(file: DiffFile, maxChars: number, forceFirstHunk: b
   return lines.join('\n');
 }
 
+// only present on the --fix loop's re-judging passes
+export function formatVerificationForPrompt(ctx: RoleRunContext): string {
+  const v = ctx.verification;
+  if (!v) return '';
+  const lines = [
+    '## Fix verification context',
+    '',
+    'Automated edits were applied to this code after an earlier review blocked it. Judge the CURRENT code exactly as you would in a fresh review — same standard, nothing more lenient or stricter — but use this to check whether each earlier problem is really gone (read the code; do not trust the fix descriptions) and whether the edits introduced anything new.',
+    '',
+    'Findings the edits were meant to resolve:',
+  ];
+  for (const { role, finding } of v.previouslyBlocking.slice(0, 15)) {
+    lines.push(`- (${ROLE_LABELS[role]}) [${finding.severity}] ${finding.file}:${finding.lineStart}-${finding.lineEnd} — ${finding.description.slice(0, 300)}`);
+  }
+  lines.push('', 'Edits that were applied:');
+  for (const fix of v.appliedFixes.slice(0, 25)) lines.push(`- ${fix.file}: ${fix.description.slice(0, 200)}`);
+  return lines.join('\n') + '\n\n';
+}
+
 // renders every prior role's output in the order they ran
 export function formatPriorContextForPrompt(ctx: RoleRunContext): string {
   const completed = ctx.aggregator.completedRoles;
@@ -210,7 +229,7 @@ You must respond with ONLY a single JSON object — no prose before or after it,
 
 Rules:
 - "verdict" must be "block" if you found any finding you believe should stop this change from merging, "flag" if you have concerns worth a human look but nothing blocking, "pass" if you have no concerns.
-- Verdict and severities must agree: "block" requires at least one "high" or "critical" finding; "flag" is for "medium"/"low" findings; "pass" means no findings above "info". Never return "block" with only low-severity findings, and never return "pass" while listing a "high"/"critical" one.
+- Verdict and severities must agree: "block" requires at least one "high" or "critical" finding; "flag" requires at least one "medium" finding; "pass" may still list "low"/"info" findings as advisory notes. Never return "block" without a high/critical finding, never "flag" with only low/info findings, and never "pass" while listing a medium-or-worse finding.
 - Severity rubric (use the same scale as every other role): "critical" = will break production, lose/corrupt data, or violate a stated requirement outright for real users; "high" = a real defect or violation that will bite in normal use; "medium" = a real but situational problem, or one that needs a human decision; "low" = minor, unlikely to bite; "info" = an observation, no action required.
 - Only report findings anchored in the diff shown to you. Use the exact line numbers in brackets (a line marked "[+42]" is line 42 in the new file; "[-17]" is line 17 of the old file). Prefer anchoring to lines marked "+" (added); for a removal, anchor to the nearest surviving line and say what was removed. A finding that cites a file or lines you did not see is a fabricated finding — leave it out.
 - If a problem lives in a file that is NOT in the diff (found via a tool call), anchor the finding to the diff line that causes it and name the other file and what you found there in "description".
@@ -299,7 +318,7 @@ async function runToolLoop(systemInstruction: string, initialUserPrompt: string,
   const messages: Message[] = [{ role: 'user', parts: [{ kind: 'text', text: initialUserPrompt }] }];
 
   for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
-    const res = await generateWithRetry(ctx.llm, {
+    const res = await generateRecorded(ctx, {
       model: ctx.model,
       systemInstruction,
       messages,
@@ -323,7 +342,7 @@ async function runToolLoop(systemInstruction: string, initialUserPrompt: string,
   }
 
   // budget's up — ask once more without tools so it has to answer from what it's got
-  const finalRes = await generateWithRetry(ctx.llm, { model: ctx.model, systemInstruction, messages, temperature: 0.2 });
+  const finalRes = await generateRecorded(ctx, { model: ctx.model, systemInstruction, messages, temperature: 0.2 });
   messages.push({ role: 'assistant', parts: finalRes.message.parts });
   return { text: extractText(finalRes.message.parts), messages };
 }
@@ -352,7 +371,7 @@ async function requestCorrectiveJson(
       ],
     },
   ];
-  const res = await generateWithRetry(ctx.llm, { model: ctx.model, systemInstruction, messages: retryMessages, temperature: 0.1 });
+  const res = await generateRecorded(ctx, { model: ctx.model, systemInstruction, messages: retryMessages, temperature: 0.1 });
   return extractJson(extractText(res.message.parts));
 }
 
@@ -367,7 +386,9 @@ export async function runLlmRole(
 ): Promise<RoleOutput> {
   const systemInstruction = `${roleSystemPrompt}\n\n${roleContractInstructions(role)}`;
 
-  const userPrompt = `
+  // the part every review of this code shares; the fix-verification note below is appended after it
+  // so the cache key (built from this part only) is the same whether or not the loop was involved
+  const basePrompt = `
 ## Diff under review (ref: ${ctx.diff.ref})
 
 ${formatDiffForPrompt(ctx.diff)}
@@ -378,8 +399,17 @@ ${ctx.urs ?? '(none provided)'}
 
 ## Findings from earlier roles in this review
 
-${formatPriorContextForPrompt(ctx)}
-`.trim();
+${formatPriorContextForPrompt(ctx)}`.trim();
+  const userPrompt = `${basePrompt}\n\n${formatVerificationForPrompt(ctx)}`.trim();
+
+  const cacheKey = ctx.cache ? await ctx.cache.keyFor({ model: ctx.model, systemInstruction, userPrompt: basePrompt }) : null;
+  if (ctx.cache && cacheKey) {
+    const hit = await ctx.cache.get(cacheKey);
+    if (hit && hit.role === role) {
+      ctx.metrics?.markCached();
+      return hit;
+    }
+  }
 
   const { text, messages } = await runToolLoop(systemInstruction, userPrompt, ctx);
   let json: unknown;
@@ -404,6 +434,7 @@ ${formatPriorContextForPrompt(ctx)}
     );
   }
 
+  if (ctx.cache && cacheKey) await ctx.cache.put(cacheKey, parsed);
   return parsed;
 }
 
@@ -421,6 +452,13 @@ const RETRY_DELAYS_MS = [2_000, 6_000];
 // mid-response against a hosted endpoint) must not throw away the roles that
 // already finished. The SDKs already retry 429/5xx themselves; this covers what
 // they don't — connection drops while reading the response body.
+// generateWithRetry plus bookkeeping for the timing report
+async function generateRecorded(ctx: RoleRunContext, req: GenerateRequest): Promise<GenerateResponse> {
+  const res = await generateWithRetry(ctx.llm, req);
+  ctx.metrics?.record(res.usage);
+  return res;
+}
+
 export async function generateWithRetry(
   llm: ILLMProvider,
   req: GenerateRequest,
@@ -480,14 +518,21 @@ export function normalizeRoleOutput(output: RoleOutput): RoleOutput {
     notes.push(`${output.findings.length - findings.length} duplicate/excess finding(s) dropped, keeping the ${MAX_FINDINGS_PER_ROLE} most severe at most`);
   }
 
+  // block needs high/critical, flag needs at least medium, pass may carry low/info notes.
+  // A flag backed only by low findings used to count as half a block in the Resolver
+  // (verdict base 0.5), so five roles politely flagging nits added up to Request Changes.
   let verdict = output.verdict;
   const hasBlocking = findings.some((f) => BLOCKING_SEVERITIES.has(f.severity));
+  const hasMediumOrWorse = findings.some((f) => SEVERITY_ORDER.indexOf(f.severity) >= SEVERITY_ORDER.indexOf('medium'));
   if (verdict === 'block' && !hasBlocking) {
+    verdict = hasMediumOrWorse ? 'flag' : 'pass';
+    notes.push(`verdict downgraded from block to ${verdict} — no high/critical finding supported it`);
+  } else if (verdict === 'flag' && !hasMediumOrWorse) {
+    verdict = 'pass';
+    notes.push('verdict changed from flag to pass — only low/info findings, kept as advisory notes');
+  } else if (verdict === 'pass' && hasMediumOrWorse) {
     verdict = 'flag';
-    notes.push('verdict downgraded from block to flag — no high/critical finding supported it');
-  } else if (verdict === 'pass' && hasBlocking) {
-    verdict = 'flag';
-    notes.push('verdict raised from pass to flag — it listed a high/critical finding');
+    notes.push('verdict raised from pass to flag — it listed a medium-or-worse finding');
   }
 
   if (notes.length === 0) return output;

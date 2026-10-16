@@ -28,6 +28,16 @@ export function reviewCommandBuilder<T>(y: Argv<T>): Argv<T> {
         default: false,
         describe: 'Attempt to fix blocking findings via the Breaker-Builder loop',
       })
+      .option('step', {
+        type: 'boolean',
+        default: false,
+        describe: 'Pause after each role (Continue / Details / Skip / Abort) instead of running all six straight through',
+      })
+      .option('no-cache', {
+        type: 'boolean',
+        default: false,
+        describe: 'Ask the model again even if an identical review of identical code is already stored',
+      })
       .option('max-iterations', {
         type: 'number',
         describe: 'Override the default Breaker-Builder iteration cap (never above 5, with --fix)',
