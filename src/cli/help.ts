@@ -76,6 +76,9 @@ export function renderHelp(): void {
   process.stdout.write(
     `  ${green('$')} ${b('codexrev')} ${cyan('review scan')} ${dim('[flags]')}\n`,
   );
+  process.stdout.write(
+    `  ${green('$')} ${b('codexrev')} ${cyan('safety')} ${dim('<assess|verify|history>')}\n`,
+  );
 
   heading('Commands');
   process.stdout.write(
@@ -89,6 +92,9 @@ export function renderHelp(): void {
   );
   process.stdout.write(
     `  ${b(cyan('review'))}          ${'Run the six-role adversarial code review pipeline  '}${dim('(scan)')}\n`,
+  );
+  process.stdout.write(
+    `  ${b(cyan('safety'))}          ${'Evaluate proposed DevOps actions before execution  '}${dim('(assess, verify, history)')}\n`,
   );
 
   const writeRow = (flag: string, arg: string, desc: string): void => {
@@ -217,6 +223,25 @@ export function renderHelp(): void {
     ['--max-iterations', '<n>', 'Override the fix-loop iteration cap (never above 5)'],
   ];
   for (const [flag, arg, desc] of reviewRows) writeRow(flag, arg, desc);
+
+  heading('Safety subcommands (with `codexrev safety`)');
+  const safetyCommandRows: Array<[string, string, string]> = [
+    ['assess', '', 'Assess a proposed action (pipeline incomplete)'],
+    ['verify', '', 'Verify a signed Evidence Pack (not implemented)'],
+    ['history', '', 'Show previous assessments (not connected)'],
+  ];
+  for (const [flag, arg, desc] of safetyCommandRows) writeRow(flag, arg, desc);
+
+  heading('Safety flags (with `codexrev safety`)');
+  const safetyRows: Array<[string, string, string]> = [
+    ['--action', '<type>', 'Proposed action type'],
+    ['--target', '<env>', 'Target environment'],
+    ['--input', '<path>', 'Structured action/evidence input file'],
+    ['--diff', '<ref>', 'Git revision to compare'],
+    ['--output', '<path>', 'Evidence Pack output destination'],
+    ['--file', '<path>', 'Evidence Pack to verify (safety verify)'],
+  ];
+  for (const [flag, arg, desc] of safetyRows) writeRow(flag, arg, desc);
 
   heading('Learn more');
   process.stdout.write(

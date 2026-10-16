@@ -26,6 +26,8 @@ import { PROVIDER_IDS, providerMeta } from '../providers/registry.js';
 import { probeLocalProvider, resolveBaseUrlForProvider } from '../providers/health.js';
 import { reviewCommandBuilder } from '../features/review-pipeline/cli/registerReviewCommand.js';
 import { handleReviewCommand } from '../features/review-pipeline/cli/handleReviewCommand.js';
+import { safetyCommandBuilder } from '../features/action-safety/cli/registerSafetyCommand.js';
+import { handleSafetyCommand } from '../features/action-safety/cli/handleSafetyCommand.js';
 
 interface CliArgs {
   provider?: string;
@@ -161,6 +163,7 @@ async function main(): Promise<void> {
         ),
     )
     .command('review', 'Run the six-role adversarial code review pipeline', reviewCommandBuilder)
+    .command('safety', 'Evaluate proposed DevOps actions before execution', safetyCommandBuilder)
     .option('provider', {
       type: 'string',
       describe: `LLM provider: ${PROVIDER_IDS.join(' | ')}`,
@@ -213,6 +216,20 @@ async function main(): Promise<void> {
   }
 
   // Route subcommands first.
+  // `safety` is matched on the first positional only and handled before the
+  // checks below, so e.g. `safety history init` is not mistaken for `init`.
+  if (argv._[0] === 'safety') {
+    await handleSafetyCommand(argv._.slice(1), {
+      action: argv.action,
+      target: argv.target,
+      input: argv.input,
+      diff: argv.diff,
+      output: argv.output,
+      file: argv.file,
+    });
+    return;
+  }
+
   if (argv._.includes('init')) {
     const flags = argv as unknown as {
       provider?: string;
