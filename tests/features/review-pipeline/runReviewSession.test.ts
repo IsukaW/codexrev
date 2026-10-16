@@ -177,6 +177,7 @@ describe('runReviewSession — fix loop crash resilience (reported live: a mid-l
         cwd: tmpRoot,
         forceNonInteractive: true,
         fix: true,
+        fixStrategy: 'classic', // pins the original single-edit loop; the robust path has its own tests (fixRobust.test.ts)
         maxIterations: 3,
         llmOverride: crashingFixProvider(),
       }),
@@ -222,6 +223,7 @@ describe('runReviewSession — Phase 9 (post-fix HTML report & audit update)', (
         cwd: tmpRoot,
         forceNonInteractive: true,
         fix: true,
+        fixStrategy: 'classic', // pins the original single-edit loop; the robust path has its own tests (fixRobust.test.ts)
         maxIterations: 3,
         llmOverride: fixingProvider(),
       });
@@ -252,7 +254,7 @@ describe('runReviewSession — Phase 9 (post-fix HTML report & audit update)', (
       // Paired fix-<timestamp>.html report, alongside the scan report
       // (Phase 9 "New" bullet 3 / DoD: two HTML files after a --fix run).
       expect(result.fixReportPath).toBeDefined();
-      expect(path.dirname(result.fixReportPath!)).toBe(path.dirname(result.reportPaths.html));
+      expect(path.dirname(result.fixReportPath!)).toBe(path.dirname(result.reportPaths!.html));
       expect(path.basename(result.fixReportPath!)).toMatch(/^fix-\d{8}-\d{6}\.html$/);
 
       const fixReportHtml = await fs.readFile(result.fixReportPath!, 'utf-8');

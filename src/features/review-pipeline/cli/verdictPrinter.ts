@@ -5,7 +5,8 @@
  * the persistent ReviewSessionView Ink tree instead.
  */
 
-import { ROLE_LABELS, type RoleOutput } from '../roles/roleContract.js';
+import { ROLE_LABELS, ROLE_ORDER, type RoleOutput } from '../roles/roleContract.js';
+import { formatDuration, formatTokens } from '../pipeline/roleMetrics.js';
 import type { PipelineRunResult } from '../pipeline/orchestrator.js';
 import { RESOLVER_DECISION_LABELS, type ResolverResult } from '../pipeline/resolverEngine.js';
 import type { BreakerBuilderResult, FixAttemptRecord } from '../pipeline/breakerBuilderLoop.js';
@@ -52,6 +53,24 @@ export function printVerdictLine(output: RoleOutput): void {
 }
 
 /** Final summary line after the orchestrator returns. */
+// where a scan's time went — one line per role that ran, plus the total
+export function printTimings(timings: PipelineRunResult['timings']): void {
+  const c = colors();
+  const rows = ROLE_ORDER.filter((r) => timings[r]).map((r) => ({ role: r, t: timings[r]! }));
+  if (rows.length === 0) return;
+  const total = rows.reduce((n, r) => n + r.t.durationMs, 0);
+  console.log(`\n${c.dim}⏱  Time per role${c.reset}`);
+  for (const { role, t } of rows) {
+    const detail = t.cached
+      ? 'reused from an identical earlier review'
+      : t.llmCalls > 0
+        ? `${t.llmCalls} model call${t.llmCalls === 1 ? '' : 's'} · ${formatTokens(t.inputTokens)} in / ${formatTokens(t.outputTokens)} out tokens`
+        : 'no model call';
+    console.log(`${c.dim}   ${ROLE_LABELS[role].padEnd(24)} ${formatDuration(t.durationMs).padStart(7)}  ${detail}${c.reset}`);
+  }
+  console.log(`${c.dim}   ${'Total'.padEnd(24)} ${formatDuration(total).padStart(7)}${c.reset}`);
+}
+
 export function printPipelineOutcome(result: PipelineRunResult): void {
   const c = colors();
   const total = 6;
@@ -103,19 +122,42 @@ export function printFixReportPath(path: string): void {
 export function printFixIterationStart(iteration: number, blockingFindingsCount: number): void {
   const c = colors();
   console.log(
-    `\n${c.dim}— Fix iteration ${iteration} (${blockingFindingsCount} blocking finding${blockingFindingsCount === 1 ? '' : 's'}) —${c.reset}`,
+    `\n${c.dim}— Fix iteration ${iteration} (${blockingFindingsCount} finding${blockingFindingsCount === 1 ? '' : 's'} to fix) —${c.reset}`,
   );
 }
 
 /** One line per applied fix. */
+// one multi-file fix arrives as one record per edit, all with the same description —
+// print the description once and list the files under it instead of repeating it per edit
+let lastPrintedFix: { iteration: number; description: string; files: Set<string> } | undefined;
+
 export function printFixAttempt(record: FixAttemptRecord): void {
   const c = colors();
   const stageLabel = record.fixerStage === 'deterministic' ? 'deterministic' : 'LLM';
-  console.log(`${c.dim}🔧 [${stageLabel}]${c.reset} ${record.file} — ${record.description}`);
+  if (lastPrintedFix && lastPrintedFix.iteration === record.iteration && lastPrintedFix.description === record.description) {
+    if (!lastPrintedFix.files.has(record.file)) {
+      lastPrintedFix.files.add(record.file);
+      console.log(`${c.dim}     ↳ ${record.file}${c.reset}`);
+    }
+    return;
+  }
+  lastPrintedFix = { iteration: record.iteration, description: record.description, files: new Set([record.file]) };
+  console.log(`${c.dim}🔧 [${stageLabel}]${c.reset} ${record.description}`);
+  console.log(`${c.dim}     ↳ ${record.file}${c.reset}`);
 }
 
 /** Final Breaker-Builder outcome — resolved, escalated, or stopped via a gate decision. */
 export function printBreakerBuilderOutcome(result: BreakerBuilderResult): void {
+  printBreakerBuilderOutcomeBody(result);
+  const c = colors();
+  for (const note of result.notes ?? []) console.log(`${c.dim}  note: ${note}${c.reset}`);
+  if (result.timings && result.timings.length > 0) {
+    console.log(`\n${c.dim}⏱  Time in the fix${c.reset}`);
+    for (const { label, ms } of result.timings) console.log(`${c.dim}   ${label.padEnd(30)} ${formatDuration(ms).padStart(7)}${c.reset}`);
+  }
+}
+
+function printBreakerBuilderOutcomeBody(result: BreakerBuilderResult): void {
   const c = colors();
   if (result.outcome === 'resolved') {
     console.log(

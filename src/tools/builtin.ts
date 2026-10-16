@@ -107,7 +107,7 @@ const editImpl: Tool = {
     }
     const updated = replace_all
       ? orig.split(old_string).join(new_string)
-      : orig.replace(old_string, new_string);
+      : orig.replace(old_string, () => new_string); // function form: new_string is literal, "$&" / "$'" are not special
     await fs.writeFile(full, updated, 'utf-8');
     return { output: `edited ${full}` };
   },

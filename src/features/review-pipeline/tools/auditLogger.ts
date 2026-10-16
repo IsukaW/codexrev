@@ -18,6 +18,7 @@ import type { RoleId, RoleOutput, Verdict } from '../roles/roleContract.js';
 import type { PipelineOutcome } from '../pipeline/orchestrator.js';
 import type { ResolverDecision } from '../pipeline/resolverEngine.js';
 import type { FixAttemptRecord, FixerStage } from '../pipeline/breakerBuilderLoop.js';
+import type { RoleTiming } from '../pipeline/roleMetrics.js';
 
 export const AUDIT_LOG_FILENAME = 'audit.jsonl';
 
@@ -47,6 +48,12 @@ export interface RoleVerdictAuditEntry {
   readonly findingsCount: number;
   readonly confidence: number;
   readonly summary: string;
+  /** what the role cost — absent on entries written before timing was recorded */
+  readonly durationMs?: number;
+  readonly llmCalls?: number;
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+  readonly cached?: boolean;
 }
 
 export interface ResolverDecisionAuditEntry {
@@ -89,7 +96,7 @@ export function runStartAuditEntry(runId: string, diffRef: string): RunStartAudi
   return { type: 'run_start', timestamp: nowIso(), runId, diffRef };
 }
 
-export function roleVerdictAuditEntry(runId: string, output: RoleOutput): RoleVerdictAuditEntry {
+export function roleVerdictAuditEntry(runId: string, output: RoleOutput, timing?: RoleTiming): RoleVerdictAuditEntry {
   return {
     type: 'role_verdict',
     timestamp: nowIso(),
@@ -99,6 +106,15 @@ export function roleVerdictAuditEntry(runId: string, output: RoleOutput): RoleVe
     findingsCount: output.findings.length,
     confidence: output.confidence,
     summary: output.summary,
+    ...(timing
+      ? {
+          durationMs: timing.durationMs,
+          llmCalls: timing.llmCalls,
+          inputTokens: timing.inputTokens,
+          outputTokens: timing.outputTokens,
+          ...(timing.cached ? { cached: true } : {}),
+        }
+      : {}),
   };
 }
 
