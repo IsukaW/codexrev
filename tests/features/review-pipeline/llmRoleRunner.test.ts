@@ -381,7 +381,7 @@ describe('runLlmRole — corrective retry when the "final" text is not valid JSO
           return {
             message: {
               role: 'assistant',
-              parts: [{ kind: 'text', text: JSON.stringify({ role: 'pm', verdict: 'flag', findings: [], summary: 'recovered', confidence: 0.7 }) }],
+              parts: [{ kind: 'text', text: JSON.stringify({ role: 'pm', verdict: 'pass', findings: [], summary: 'recovered', confidence: 0.7 }) }],
             },
             usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
             finishReason: 'completed',

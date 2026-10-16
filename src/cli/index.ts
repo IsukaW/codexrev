@@ -315,6 +315,8 @@ async function main(): Promise<void> {
       urs: argv.urs as string | undefined,
       output: argv.output as string | undefined,
       fix: argv.fix as boolean | undefined,
+      step: (argv as Record<string, unknown>).step as boolean | undefined,
+      noCache: (argv as Record<string, unknown>).noCache as boolean | undefined,
       // yargs converts --max-iterations → maxIterations.
       maxIterations: (argv as Record<string, unknown>).maxIterations as number | undefined,
       print: argv.print,

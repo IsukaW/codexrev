@@ -8,6 +8,7 @@ import { CodexrevError } from '../../../utils/errors.js';
 import { ProviderError } from '../../../core/types.js';
 import { exitCodeForDecision } from '../pipeline/resolverEngine.js';
 import { runReviewSession } from './runReviewSession.js';
+import { loadSettings } from '../../../config/loader.js';
 
 export interface ReviewScanFlags {
   diff?: string;
@@ -15,6 +16,8 @@ export interface ReviewScanFlags {
   output?: string;
   fix?: boolean;
   maxIterations?: number;
+  step?: boolean;
+  noCache?: boolean;
   /** global --print/-p flag — forces non-interactive mode */
   print?: string;
 }
@@ -48,10 +51,15 @@ async function scanCommand(flags: ReviewScanFlags): Promise<void> {
       outputDir: flags.output,
       fix: flags.fix,
       maxIterations: flags.maxIterations,
+      step: flags.step,
+      noCache: flags.noCache,
     });
     // 0 approve, 1 block/request changes, 2 escalate (fix loop hit its
-    // iteration/retry limits with blocking findings still open)
-    process.exitCode = breakerBuilder?.outcome === 'escalated' ? 2 : exitCodeForDecision(resolver.decision);
+    // iteration/retry limits with blocking findings still open).
+    // reviewPipeline.failOn: 'block' makes Request Changes exit 0 too.
+    const failOn = (await loadSettings(process.cwd())).reviewPipeline.failOn ?? 'request_changes';
+    const escalatedAndBlocking = breakerBuilder?.outcome === 'escalated' && (failOn === 'request_changes' || resolver.decision === 'block');
+    process.exitCode = escalatedAndBlocking ? 2 : exitCodeForDecision(resolver.decision, failOn);
   } catch (err) {
     // both are expected user-facing failures (bad diff, bad LLM json, bad api key), not bugs
     if (err instanceof CodexrevError || err instanceof ProviderError) {

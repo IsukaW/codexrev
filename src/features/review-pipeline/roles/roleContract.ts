@@ -87,6 +87,9 @@ export function validateFinding(x: unknown, path: string): Finding {
   if (typeof r.severity !== 'string' || !SEVERITIES.has(r.severity as Severity)) {
     fail(`${path}.severity`, `expected one of ${SEVERITY_ORDER.join(', ')}`);
   }
+  // models often send null (or ""/"N/A") for an optional field instead of omitting it — that means "not applicable", not a broken response
+  if (r.cwe === null || r.cwe === '' || (typeof r.cwe === 'string' && /^(n\/?a|none|null)$/i.test(r.cwe.trim()))) r.cwe = undefined;
+  if (r.suggestedFix === null) r.suggestedFix = undefined;
   if (r.cwe !== undefined && typeof r.cwe !== 'string') fail(`${path}.cwe`, 'expected a string when present');
   if (typeof r.file !== 'string' || r.file.length === 0) fail(`${path}.file`, 'expected a non-empty string');
   if (typeof r.lineStart !== 'number' || !Number.isFinite(r.lineStart) || r.lineStart < 1) {

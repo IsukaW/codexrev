@@ -122,3 +122,15 @@ describe('roleContract — severity ordering', () => {
     expect(bumpSeverity('critical')).toBe('critical');
   });
 });
+
+describe('validateFinding — optional fields sent as null', () => {
+  const base = { id: 'f1', severity: 'low', file: 'a.ts', lineStart: 1, lineEnd: 1, description: 'd' };
+  it.each([[null], [''], ['N/A'], ['none']])('treats cwe=%j as absent instead of failing the whole role (seen live: cwe null crashed a --fix run)', (cwe) => {
+    const f = validateFinding({ ...base, cwe, suggestedFix: null }, '$');
+    expect(f.cwe).toBeUndefined();
+    expect(f.suggestedFix).toBeUndefined();
+  });
+  it('still rejects a cwe that is neither a string nor null', () => {
+    expect(() => validateFinding({ ...base, cwe: 89 }, '$')).toThrow(/cwe/);
+  });
+});

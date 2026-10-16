@@ -92,8 +92,19 @@ describe('normalizeRoleOutput — verdict/severity consistency', () => {
     expect(out.summary).toContain('downgraded');
   });
 
-  it('downgrades block with zero findings', () => {
-    expect(normalizeRoleOutput(output('block', [])).verdict).toBe('flag');
+  it('downgrades block with zero findings all the way to pass', () => {
+    expect(normalizeRoleOutput(output('block', [])).verdict).toBe('pass');
+  });
+
+  it('turns a flag backed only by low/info findings into a pass, keeping the findings as notes', () => {
+    const out = normalizeRoleOutput(output('flag', [finding('f1', 'low'), finding('f2', 'info', 'f2', 2)]));
+    expect(out.verdict).toBe('pass');
+    expect(out.findings).toHaveLength(2);
+    expect(out.summary).toContain('advisory');
+  });
+
+  it('raises a pass that lists a medium finding to flag', () => {
+    expect(normalizeRoleOutput(output('pass', [finding('f1', 'medium')])).verdict).toBe('flag');
   });
 
   it('keeps a well-supported block exactly as is', () => {

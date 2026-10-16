@@ -223,6 +223,8 @@ export function renderHelp(): void {
     ['--urs', '<path>', 'URS document for the BA role to check against'],
     ['--output', '<dir>', 'Directory to write reports to'],
     ['--fix', '', 'Attempt to fix blocking findings via Breaker-Builder'],
+    ['--no-cache', '', 'Ask the model again even if an identical review of identical code is stored'],
+    ['--step', '', 'Pause after each role (Continue/Details/Skip/Abort) instead of running straight through'],
     ['--max-iterations', '<n>', 'Override the fix-loop iteration cap (never above 5)'],
   ];
   for (const [flag, arg, desc] of reviewRows) writeRow(flag, arg, desc);
