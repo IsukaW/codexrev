@@ -251,6 +251,18 @@ describe('resolverEngine — partial runs (Skip/Abort/error)', () => {
   });
 });
 
+describe('exitCodeForDecision — failOn', () => {
+  it("failOn 'block' lets Request Changes through but still fails a Block", () => {
+    expect(exitCodeForDecision('request_changes', 'block')).toBe(0);
+    expect(exitCodeForDecision('block', 'block')).toBe(1);
+    expect(exitCodeForDecision('approve', 'block')).toBe(0);
+  });
+  it("the default is unchanged: anything short of Approve fails", () => {
+    expect(exitCodeForDecision('request_changes')).toBe(1);
+    expect(exitCodeForDecision('request_changes', 'request_changes')).toBe(1);
+  });
+});
+
 describe('exitCodeForDecision', () => {
   it('approve → 0', () => {
     expect(exitCodeForDecision('approve')).toBe(0);

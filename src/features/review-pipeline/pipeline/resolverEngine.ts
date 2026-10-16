@@ -272,6 +272,10 @@ function buildRationale(
 // 0 = Approve, 1 = everything else (a CI script gating on $?===0 shouldn't
 // proceed on Request Changes either). exit code 2 ("Escalate") belongs to the
 // breaker-builder exhaustion path, the resolver itself never emits it.
-export function exitCodeForDecision(decision: ResolverDecision): 0 | 1 {
-  return decision === 'approve' ? 0 : 1;
+// failOn 'block' lets Request Changes through (exit 0) so an automated pipeline only stops on a real Block;
+// the findings are still printed and written to the report either way
+export function exitCodeForDecision(decision: ResolverDecision, failOn: 'request_changes' | 'block' = 'request_changes'): 0 | 1 {
+  if (decision === 'approve') return 0;
+  if (decision === 'request_changes' && failOn === 'block') return 0;
+  return 1;
 }

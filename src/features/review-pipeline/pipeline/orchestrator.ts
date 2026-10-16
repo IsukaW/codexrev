@@ -15,7 +15,9 @@ import { runPmRole } from '../roles/pm.js';
 import { ContextAggregator } from './contextAggregator.js';
 import type { ParsedDiff } from './diffReader.js';
 import type { ILLMProvider } from './illmProvider.js';
-import type { RoleRunContext } from './roleRunContext.js';
+import type { RoleRunContext, VerificationContext } from './roleRunContext.js';
+import { RoleMetrics, type RoleTiming } from './roleMetrics.js';
+import type { RoleCache } from './reviewCache.js';
 import { InteractionChannel } from '../../../core/interaction.js';
 
 // exported so breakerBuilderLoop.ts can re-run individual roles without its own copy of this map
@@ -36,12 +38,14 @@ export interface RunPipelineOptions {
   readonly llm: ILLMProvider;
   readonly model: string;
   readonly cwd: string;
+  readonly verification?: VerificationContext; // set only by the --fix loop's final verification pass
+  readonly cache?: RoleCache; // reuse identical judgements of identical code (see reviewCache.ts)
   readonly interaction?: InteractionChannel; // omit for non-interactive (CI/--print), runs straight through
   readonly onRoleStart?: (role: RoleId) => void; // fires right before a role's LLM call (or Build's shell-out) so the CLI can show a spinner
   // fires right after a role finishes, awaited before moving on — CLI uses this to print the
   // verdict and append the audit-log entry; awaiting it means the entry is flushed before the
   // next role starts, so a crash mid-run still leaves a complete trail up to the last role that ran
-  readonly onRoleComplete?: (output: RoleOutput) => void | Promise<void>;
+  readonly onRoleComplete?: (output: RoleOutput, timing?: RoleTiming) => void | Promise<void>;
 }
 
 export interface PipelineRunResult {
@@ -49,6 +53,7 @@ export interface PipelineRunResult {
   readonly aggregator: ContextAggregator; // final accumulated context, feed straight to Resolver/report renderer
   readonly ranRoles: readonly RoleId[];
   readonly skippedRoles: readonly RoleId[]; // never ran because a skip/abort or a role error stopped things early
+  readonly timings: Readonly<Partial<Record<RoleId, RoleTiming>>>; // what each role that ran cost (observation only)
   readonly error?: unknown; // set only when outcome === 'errored'
 }
 
@@ -64,9 +69,11 @@ export interface PipelineRunResult {
 export async function runPipeline(opts: RunPipelineOptions): Promise<PipelineRunResult> {
   const aggregator = new ContextAggregator(opts.diff, opts.urs);
   const ranRoles: RoleId[] = [];
+  const timings: Partial<Record<RoleId, RoleTiming>> = {};
 
   for (let i = 0; i < ROLE_ORDER.length; i++) {
     const role = ROLE_ORDER[i];
+    const metrics = new RoleMetrics();
     const ctx: RoleRunContext = {
       llm: opts.llm,
       model: opts.model,
@@ -74,18 +81,24 @@ export async function runPipeline(opts: RunPipelineOptions): Promise<PipelineRun
       urs: opts.urs,
       aggregator,
       cwd: opts.cwd,
+      verification: opts.verification,
+      metrics,
+      cache: opts.cache,
     };
 
     opts.onRoleStart?.(role);
     let output: RoleOutput;
+    const startedAt = Date.now();
     try {
       output = await ROLE_RUNNERS[role](ctx);
     } catch (error) {
-      return { outcome: 'errored', aggregator, ranRoles, skippedRoles: ROLE_ORDER.slice(i), error };
+      return { outcome: 'errored', aggregator, ranRoles, skippedRoles: ROLE_ORDER.slice(i), timings, error };
     }
+    const timing = metrics.snapshot(Date.now() - startedAt);
+    timings[role] = timing;
     aggregator.addRoleOutput(output);
     ranRoles.push(role);
-    await opts.onRoleComplete?.(output);
+    await opts.onRoleComplete?.(output, timing);
 
     if (opts.interaction) {
       const decision = await runGateUntilDecided(opts.interaction, role, output);
@@ -95,12 +108,13 @@ export async function runPipeline(opts: RunPipelineOptions): Promise<PipelineRun
           aggregator,
           ranRoles,
           skippedRoles: ROLE_ORDER.slice(i + 1),
+          timings,
         };
       }
     }
   }
 
-  return { outcome: 'completed', aggregator, ranRoles, skippedRoles: [] };
+  return { outcome: 'completed', aggregator, ranRoles, skippedRoles: [], timings };
 }
 
 // loops the gate for one role until a non-'details' decision comes back

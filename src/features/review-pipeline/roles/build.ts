@@ -166,6 +166,73 @@ async function runNodeSyntaxFallback(
   };
 }
 
+// tsconfig.json allows // and /* */ comments and trailing commas, which JSON.parse rejects
+export function parseJsonc(text: string): unknown {
+  let out = '';
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (inString) {
+      out += c;
+      if (c === '\\') out += text[++i] ?? '';
+      else if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') {
+      inString = true;
+      out += c;
+    } else if (c === '/' && text[i + 1] === '/') {
+      while (i < text.length && text[i] !== '\n') i++;
+      out += '\n';
+    } else if (c === '/' && text[i + 1] === '*') {
+      i += 2;
+      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++;
+      i++;
+    } else {
+      out += c;
+    }
+  }
+  return JSON.parse(out.replace(/,(\s*[}\]])/g, '$1'));
+}
+
+// A "solution-style" tsconfig (Vite/React templates, monorepos) has `files: []` plus
+// `references`: it lists projects but includes no source itself, so a plain
+// `tsc --noEmit` against it checks ZERO files and "passes". Check each referenced
+// project directly instead. Returns [] when tsconfig.json is a normal project.
+export async function resolveTscReferencedProjects(cwd: string): Promise<string[]> {
+  let cfg: { files?: unknown; references?: unknown };
+  try {
+    cfg = parseJsonc(await fs.readFile(path.join(cwd, 'tsconfig.json'), 'utf-8')) as typeof cfg;
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(cfg.references) || cfg.references.length === 0) return [];
+  if (!(Array.isArray(cfg.files) && cfg.files.length === 0)) return []; // has its own sources — plain check is meaningful
+  const projects: string[] = [];
+  for (const ref of cfg.references as Array<{ path?: unknown }>) {
+    if (typeof ref?.path !== 'string') continue;
+    const p = ref.path.endsWith('.json') ? ref.path : path.join(ref.path, 'tsconfig.json');
+    if (await fileExists(path.join(cwd, p))) projects.push(p);
+  }
+  return projects;
+}
+
+// The shell tool runs commands inside the OS sandbox (macOS seatbelt), which denies
+// fork(): `npx --no-install tsc` spawns a child and dies with exit 255 and no output,
+// so on macOS the old command made Build report "could not run" for EVERY project.
+// Calling the project's own tsc binary directly needs no fork. Searches upward so a
+// hoisted monorepo install (node_modules at the workspace root) is found too.
+export async function findLocalTscBinary(cwd: string): Promise<string | null> {
+  let dir = path.resolve(cwd);
+  for (;;) {
+    const candidate = path.join(dir, 'node_modules', '.bin', 'tsc');
+    if (await fileExists(candidate)) return candidate;
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
 const TARGETS: readonly BuildTarget[] = [
   { marker: 'tsconfig.json', toolLabel: 'tsc', command: 'npx --no-install tsc --noEmit --pretty false', timeoutMs: 120_000, parse: parseTsc },
   { marker: 'go.mod', toolLabel: 'go vet', command: 'go vet ./...', timeoutMs: 120_000, parse: parseGoVet },
@@ -236,40 +303,78 @@ export async function runBuildRole(ctx: RoleRunContext): Promise<RoleOutput> {
   let sawExecFailure = false;
 
   for (const target of detected) {
-    const result = await shell.execute({ command: target.command, timeout: target.timeoutMs }, { cwd: ctx.cwd });
-    const output = typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
-    const diagnostics = target.parse(output);
-
-    if (result.isError && diagnostics.length === 0) {
-      // The tool exited non-zero but produced nothing we recognize as a
-      // diagnostic — most likely it isn't installed / reachable in this
-      // environment. That's an infra gap, not evidence the code is broken.
-      sawExecFailure = true;
-      findings.push({
-        id: `build-${findings.length + 1}`,
-        severity: 'medium',
-        file: target.marker,
-        lineStart: 1,
-        lineEnd: 1,
-        description: `Could not run "${target.toolLabel}" in this environment: ${(output.trim() || 'command failed with no output').slice(0, 300)}.`,
-      });
-      toolSummaries.push(`${target.toolLabel}: could not run`);
-      continue;
+    // one command per target, except a solution-style tsconfig which needs one per referenced project
+    let baseCommand = target.command;
+    if (target.marker === 'tsconfig.json') {
+      const tsc = await findLocalTscBinary(ctx.cwd);
+      if (!tsc) {
+        sawExecFailure = true;
+        findings.push({
+          id: `build-${findings.length + 1}`,
+          severity: 'medium',
+          file: target.marker,
+          lineStart: 1,
+          lineEnd: 1,
+          description: 'Could not run "tsc" in this environment: TypeScript is not installed in this project (no node_modules/.bin/tsc) — run your package manager\'s install, then re-run the review.',
+        });
+        toolSummaries.push(`${target.toolLabel}: could not run (TypeScript not installed)`);
+        continue;
+      }
+      baseCommand = `node ${JSON.stringify(tsc)} --noEmit --pretty false`;
+    }
+    const commands: string[] = [baseCommand];
+    let note = '';
+    if (target.marker === 'tsconfig.json') {
+      const projects = await resolveTscReferencedProjects(ctx.cwd);
+      if (projects.length > 0) {
+        commands.splice(0, commands.length, ...projects.map((p) => `${baseCommand} -p ${JSON.stringify(p)}`));
+        note = ` (solution-style tsconfig: checked ${projects.join(', ')})`;
+      }
     }
 
-    for (const d of diagnostics) {
-      findings.push({
-        id: `build-${findings.length + 1}`,
-        severity: d.severity === 'error' ? 'high' : 'medium',
-        file: d.file,
-        lineStart: d.line,
-        lineEnd: d.line,
-        description: d.code ? `${target.toolLabel} ${d.code}: ${d.message}` : `${target.toolLabel}: ${d.message}`,
-      });
+    let errorCount = 0;
+    let warnCount = 0;
+    let failedToRun = 0;
+    for (const command of commands) {
+      const result = await shell.execute({ command, timeout: target.timeoutMs }, { cwd: ctx.cwd });
+      const output = typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
+      const diagnostics = target.parse(output);
+
+      if (result.isError && diagnostics.length === 0) {
+        // The tool exited non-zero but produced nothing we recognize as a
+        // diagnostic — most likely it isn't installed / reachable in this
+        // environment. That's an infra gap, not evidence the code is broken.
+        sawExecFailure = true;
+        failedToRun++;
+        findings.push({
+          id: `build-${findings.length + 1}`,
+          severity: 'medium',
+          file: target.marker,
+          lineStart: 1,
+          lineEnd: 1,
+          description: `Could not run "${target.toolLabel}" in this environment: ${(output.trim() || 'command failed with no output').slice(0, 300)}${/Operation not permitted/i.test(output) ? ' (the OS sandbox blocked the command)' : ''}.`,
+        });
+        continue;
+      }
+
+      for (const d of diagnostics) {
+        findings.push({
+          id: `build-${findings.length + 1}`,
+          severity: d.severity === 'error' ? 'high' : 'medium',
+          file: d.file,
+          lineStart: d.line,
+          lineEnd: d.line,
+          description: d.code ? `${target.toolLabel} ${d.code}: ${d.message}` : `${target.toolLabel}: ${d.message}`,
+        });
+      }
+      errorCount += diagnostics.filter((d) => d.severity === 'error').length;
+      warnCount += diagnostics.filter((d) => d.severity === 'warning').length;
     }
-    const errorCount = diagnostics.filter((d) => d.severity === 'error').length;
-    const warnCount = diagnostics.filter((d) => d.severity === 'warning').length;
-    toolSummaries.push(`${target.toolLabel}: ${errorCount} error(s), ${warnCount} warning(s)`);
+    toolSummaries.push(
+      failedToRun === commands.length
+        ? `${target.toolLabel}: could not run`
+        : `${target.toolLabel}: ${errorCount} error(s), ${warnCount} warning(s)${note}`,
+    );
   }
 
   const hasErrors = findings.some((f) => f.severity === 'high');

@@ -30,7 +30,12 @@ import { createLLMProvider } from '../pipeline/illmProvider.js';
 import { readDiff } from '../pipeline/diffReader.js';
 import { runPipeline, type PipelineRunResult } from '../pipeline/orchestrator.js';
 import { resolve, type ResolverResult } from '../pipeline/resolverEngine.js';
-import { runBreakerBuilderLoop, type BreakerBuilderResult, type FixAttemptRecord } from '../pipeline/breakerBuilderLoop.js';
+import {
+  collectActionableFindings,
+  runBreakerBuilderLoop,
+  type BreakerBuilderResult,
+  type FixAttemptRecord,
+} from '../pipeline/breakerBuilderLoop.js';
 import { InteractionChannel } from '../../../core/interaction.js';
 import {
   printBreakerBuilderOutcome,
@@ -38,6 +43,7 @@ import {
   printFixIterationStart,
   printFixReportPath,
   printPipelineOutcome,
+  printTimings,
   printResolverDecision,
   printReportPaths,
   printVerdictLine,
@@ -55,6 +61,9 @@ import {
 import { defaultReportsDir, saveFixReport, saveReport, type ReportPaths } from './reportRenderer.js';
 import type { ILLMProvider } from '../pipeline/illmProvider.js';
 import type { RoleOutput } from '../roles/roleContract.js';
+import type { RoleTiming } from '../pipeline/roleMetrics.js';
+import { createRoleCache } from '../pipeline/reviewCache.js';
+import { prewarmFixEnvironment } from '../pipeline/fixPrewarm.js';
 
 export interface ReviewSessionOptions {
   readonly cwd: string;
@@ -68,6 +77,12 @@ export interface ReviewSessionOptions {
   readonly fix?: boolean;
   /** --max-iterations, still clamped to the hard ceiling */
   readonly maxIterations?: number;
+  /** --no-cache, ask the model again even when an identical review of identical code is on disk */
+  readonly noCache?: boolean;
+  /** --step, pause after each role with Continue / Details / Skip / Abort (interactive only) */
+  readonly step?: boolean;
+  /** overrides reviewPipeline.fixStrategy for this run */
+  readonly fixStrategy?: 'robust' | 'classic';
   /** test-only, bypasses createLLMProvider(settings) */
   readonly llmOverride?: ILLMProvider;
 }
@@ -98,8 +113,21 @@ export async function runReviewSession(opts: ReviewSessionOptions): Promise<Revi
   const runId = newAuditRunId();
   await appendAuditEntry(opts.cwd, runStartAuditEntry(runId, diff.ref));
 
-  const onRoleCompleteAudit = async (output: RoleOutput): Promise<void> => {
-    await appendAuditEntry(opts.cwd, roleVerdictAuditEntry(runId, output));
+  const onRoleCompleteAudit = async (output: RoleOutput, timing?: RoleTiming): Promise<void> => {
+    await appendAuditEntry(opts.cwd, roleVerdictAuditEntry(runId, output, timing));
+  };
+
+  const robust = (opts.fixStrategy ?? settings.reviewPipeline.fixStrategy ?? 'robust') === 'robust';
+  // identical question + identical code = reuse the earlier answer (see reviewCache.ts); library callers get none
+  const cache = opts.noCache || opts.llmOverride ? undefined : createRoleCache(opts.cwd);
+  // with --fix, get the temporary copy and its build/test baseline ready while the scan is still running
+  const prewarmed =
+    opts.fix && robust && !opts.llmOverride
+      ? prewarmFixEnvironment(opts.cwd, diff, true, { testTimeoutMs: settings.reviewPipeline.fixTestTimeoutMs })
+      : undefined;
+  const discardPrewarmed = async (): Promise<void> => {
+    const pre = await prewarmed;
+    await pre?.sandbox.cleanup().catch(() => undefined);
   };
 
   const onFixAttemptAudit = async (record: FixAttemptRecord): Promise<void> => {
@@ -134,24 +162,37 @@ export async function runReviewSession(opts: ReviewSessionOptions): Promise<Revi
       llm,
       model,
       cwd: opts.cwd,
-      interaction,
+      // the six roles run straight through by default; the Continue/Details/Skip/Abort gate after each
+      // role is opt-in (--step). The --fix batch approval below always uses `interaction`.
+      interaction: opts.step ? interaction : undefined,
       onRoleStart: interactive ? (role) => events!.emit({ type: 'role_start', role }) : undefined,
-      onRoleComplete: async (output) => {
+      cache,
+      onRoleComplete: async (output, timing) => {
         if (interactive) events!.emit({ type: 'role_complete', output });
         else printVerdictLine(output);
-        await onRoleCompleteAudit(output);
+        await onRoleCompleteAudit(output, timing);
       },
     });
-    if (!interactive) printPipelineOutcome(pipeline);
+    if (!interactive) {
+      printPipelineOutcome(pipeline);
+      printTimings(pipeline.timings);
+    }
 
     // resolve once just to check whether --fix is warranted — not printed
     // or audit-logged yet, only the final (post-fix) decision gets that
     let resolverResult = resolve(pipeline.aggregator.toJSON().roleOutputs, settings.reviewPipeline.resolverWeights);
 
+    // robust --fix also works on an Approve that still carries medium findings, so one run
+    // leaves nothing a reviewer would want changed; classic only acts on Block/Request Changes
     const shouldAttemptFix =
       !!opts.fix &&
       pipeline.outcome === 'completed' &&
-      (resolverResult.decision === 'block' || resolverResult.decision === 'request_changes');
+      (resolverResult.decision === 'block' ||
+        resolverResult.decision === 'request_changes' ||
+        (robust && collectActionableFindings(pipeline.aggregator, true, !settings.reviewPipeline.fixKeepNewTests).length > 0));
+
+    // nothing to fix (or --fix not given): the copy prepared during the scan is not needed
+    if (!shouldAttemptFix) await discardPrewarmed();
 
     if (shouldAttemptFix) {
       const maxIterations = Math.min(opts.maxIterations ?? settings.reviewPipeline.maxFixIterations, MAX_FIX_ITERATIONS_CEILING);
@@ -164,6 +205,15 @@ export async function runReviewSession(opts: ReviewSessionOptions): Promise<Revi
           diffRef: opts.diffRef,
           urs,
           maxIterations,
+          finalVerification: robust,
+          cache,
+          prewarmed,
+          agent: robust,
+          fixAdvisory: robust,
+          temporaryTests: robust && !settings.reviewPipeline.fixKeepNewTests,
+          validate: robust,
+          validationOptions: { testTimeoutMs: settings.reviewPipeline.fixTestTimeoutMs },
+          onStatus: interactive ? (message) => events!.emit({ type: 'fix_status', message }) : (message) => console.log(`… ${message}`),
           interaction,
           onIterationStart: interactive
             ? (iteration, blockingFindingsCount) => events!.emit({ type: 'fix_iteration_start', iteration, blockingFindingsCount })
@@ -196,6 +246,7 @@ export async function runReviewSession(opts: ReviewSessionOptions): Promise<Revi
             iterations: breakerBuilder.iterations,
             fixAttempts: breakerBuilder.fixAttempts,
             unresolvedFindings: breakerBuilder.unresolvedFindings,
+            notes: breakerBuilder.notes,
           },
           fixReportDir,
         );
@@ -221,6 +272,7 @@ export async function runReviewSession(opts: ReviewSessionOptions): Promise<Revi
     if (interactive) {
       if (breakerBuilder) printBreakerBuilderOutcome(breakerBuilder);
       printPipelineOutcome(pipeline);
+      printTimings(pipeline.timings);
     }
 
     // audit-log unconditionally even on 'errored' so a failed run still
@@ -284,6 +336,7 @@ export async function runReviewSession(opts: ReviewSessionOptions): Promise<Revi
     return { pipeline, resolver: resolverResult, reportPaths: paths, breakerBuilder, fixReportPath: fixReportPathValue };
   } catch (err) {
     unmountApp();
+    await discardPrewarmed();
     throw err;
   }
 }
