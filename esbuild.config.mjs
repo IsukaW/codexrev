@@ -58,6 +58,10 @@ const externals = [
   'strip-json-comments',
   'undici',
   'yargs',
+  // ts-morph (Feature 3) uses __filename at module scope — bundling its CJS
+  // into the ESM cli bundle breaks it. Keep it external (runtime dependency).
+  'ts-morph',
+  '@ts-morph/common',
 ];
 
 const commonOptions = {

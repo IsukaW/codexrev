@@ -13,6 +13,7 @@ codexrev models add                   # Interactive wizard to add provider + mod
 codexrev extensions list              # List installed extensions
 codexrev extensions install <dir>     # Install from a local directory
 codexrev extensions uninstall <name>  # Remove an installed extension
+codexrev migrate analyze              # Analyze an npm project, print a migration plan
 ```
 
 If `prompt` is omitted and no subcommand is given, Codexrev launches the interactive TUI.
@@ -165,6 +166,30 @@ codexrev models remove model gpt-4o --provider openai-prod
 | Flag | Required | Description |
 | --- | --- | --- |
 | `--provider` | yes | Provider name the model belongs to |
+
+### `codexrev migrate`
+
+Behavior-Preserving Migration & Verification Engine (Feature 3, Function 1). Analyzes an npm (JavaScript/TypeScript) project and prints an evidence-backed migration plan. Read-only: the analyzed project is never modified; compatibility facts are catalog-backed with official-source provenance; unknown compatibility is reported as unknown, never as "safe".
+
+```bash
+codexrev migrate analyze \
+  --dependency react-dom --current-version 18.3.1 --target-version 19.1.0 \
+  --from render --to createRoot \
+  --project-path ./my-app --format markdown --out ./plan.md
+```
+
+| Flag | Required | Description |
+| --- | --- | --- |
+| `--dependency` | yes | Dependency being migrated |
+| `--current-version` | yes | Current version (as declared or resolved) |
+| `--target-version` | yes | Target version |
+| `--from` / `--to` | one of | API rename migration (both required together) |
+| `--upgrade` | one of | Dependency-upgrade migration (no API rename) |
+| `--project-path` | no | npm project to analyze (default: current directory) |
+| `--format` | no | `json` (default) or `markdown` — named `--format` to avoid clashing with the global `--output-format` |
+| `--out` | no | Write the plan to a file; must resolve outside the analyzed project |
+
+Exit codes: `0` plan produced (any warnings/unresolved items are recorded inside the plan), `1` validation or analysis failure (e.g. not an npm project), `2` usage error.
 
 ## TUI slash commands
 

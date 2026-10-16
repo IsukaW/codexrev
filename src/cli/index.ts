@@ -26,6 +26,8 @@ import { PROVIDER_IDS, providerMeta } from '../providers/registry.js';
 import { probeLocalProvider, resolveBaseUrlForProvider } from '../providers/health.js';
 import { reviewCommandBuilder } from '../features/review-pipeline/cli/registerReviewCommand.js';
 import { handleReviewCommand } from '../features/review-pipeline/cli/handleReviewCommand.js';
+import { migrateCommandBuilder } from '../features/migration-verification/cli/registerMigrateCommand.js';
+import { handleMigrateCommand } from '../features/migration-verification/cli/handleAnalyzeCommand.js';
 
 interface CliArgs {
   provider?: string;
@@ -161,6 +163,7 @@ async function main(): Promise<void> {
         ),
     )
     .command('review', 'Run the six-role adversarial code review pipeline', reviewCommandBuilder)
+    .command('migrate', 'Analyze a project and produce an evidence-backed migration plan', migrateCommandBuilder)
     .option('provider', {
       type: 'string',
       describe: `LLM provider: ${PROVIDER_IDS.join(' | ')}`,
@@ -288,6 +291,25 @@ async function main(): Promise<void> {
       fix: argv.fix as boolean | undefined,
       // yargs converts --max-iterations → maxIterations.
       maxIterations: (argv as Record<string, unknown>).maxIterations as number | undefined,
+      print: argv.print,
+    });
+    return;
+  }
+
+  if (argv._.includes('migrate')) {
+    const rest = argv._.slice(argv._.indexOf('migrate') + 1);
+    const raw = argv as Record<string, unknown>;
+    await handleMigrateCommand(rest, {
+      projectPath: raw.projectPath as string | undefined,
+      dependency: raw.dependency as string | undefined,
+      currentVersion: raw.currentVersion as string | undefined,
+      targetVersion: raw.targetVersion as string | undefined,
+      from: raw.from as string | undefined,
+      to: raw.to as string | undefined,
+      upgrade: raw.upgrade as boolean | undefined,
+      // named --format (not the global --output-format) to avoid the clash
+      format: raw.format as 'json' | 'markdown' | undefined,
+      out: raw.out as string | undefined,
       print: argv.print,
     });
     return;

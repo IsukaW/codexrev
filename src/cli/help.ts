@@ -76,6 +76,9 @@ export function renderHelp(): void {
   process.stdout.write(
     `  ${green('$')} ${b('codexrev')} ${cyan('review scan')} ${dim('[flags]')}\n`,
   );
+  process.stdout.write(
+    `  ${green('$')} ${b('codexrev')} ${cyan('migrate analyze')} ${dim('[flags]')}\n`,
+  );
 
   heading('Commands');
   process.stdout.write(
@@ -89,6 +92,9 @@ export function renderHelp(): void {
   );
   process.stdout.write(
     `  ${b(cyan('review'))}          ${'Run the six-role adversarial code review pipeline  '}${dim('(scan)')}\n`,
+  );
+  process.stdout.write(
+    `  ${b(cyan('migrate'))}         ${'Analyze a project and produce a migration plan  '}${dim('(analyze)')}\n`,
   );
 
   const writeRow = (flag: string, arg: string, desc: string): void => {
@@ -217,6 +223,19 @@ export function renderHelp(): void {
     ['--max-iterations', '<n>', 'Override the fix-loop iteration cap (never above 5)'],
   ];
   for (const [flag, arg, desc] of reviewRows) writeRow(flag, arg, desc);
+
+  heading('Migrate flags (with `codexrev migrate analyze`)');
+  const migrateRows: Array<[string, string, string]> = [
+    ['--dependency', '<name>', 'Dependency being migrated (required)'],
+    ['--current-version', '<v>', 'Current version (required)'],
+    ['--target-version', '<v>', 'Target version (required)'],
+    ['--from/--to', '<api>', 'API rename migration (both, or use --upgrade)'],
+    ['--upgrade', '', 'Dependency-upgrade migration (no API rename)'],
+    ['--project-path', '<dir>', 'npm project to analyze (default: cwd)'],
+    ['--format', 'json|markdown', 'Plan output format (default: json)'],
+    ['--out', '<file>', 'Write plan to file (must be outside the project)'],
+  ];
+  for (const [flag, arg, desc] of migrateRows) writeRow(flag, arg, desc);
 
   heading('Learn more');
   process.stdout.write(
