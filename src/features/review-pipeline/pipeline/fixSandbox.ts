@@ -11,26 +11,10 @@
 import { promises as fs, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { DERIVED_DIRS } from '../../../core/toolchains/index.js';
 
-// never copied; node_modules is symlinked separately below
-const SKIP_DIRS: ReadonlySet<string> = new Set([
-  'node_modules',
-  '.git',
-  '.codexrev',
-  'dist',
-  'build',
-  'out',
-  '.next',
-  '.nuxt',
-  '.turbo',
-  '.cache',
-  'coverage',
-  'target',
-  '__pycache__',
-  '.venv',
-  'venv',
-  '.idea',
-]);
+// never copied (build output, caches — the toolchain registry's list); node_modules is symlinked separately below
+const SKIP_DIRS = DERIVED_DIRS;
 
 export interface Sandbox {
   /** absolute path of the copy */

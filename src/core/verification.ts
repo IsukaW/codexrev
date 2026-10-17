@@ -2,14 +2,13 @@
 // strategies: tests (run the suite, check exit code), llm (ask it to judge), auto
 // (tests first, fall back to llm if nothing detected).
 
-import { promises as fs } from 'node:fs';
-import path from 'node:path';
 import type { ContentGenerator } from './types.js';
 import type { Settings } from '../config/schema.js';
 import { runAgent } from './turn.js';
 import type { Tool } from '../tools/registry.js';
 import type { McpRegistry } from '../mcp/registry.js';
 import { logger } from '../utils/logger.js';
+import { detectTestCommand, runToolchainCommand, type TestCommand } from './toolchains/index.js';
 
 export type VerificationMode = 'tests' | 'llm' | 'auto';
 
@@ -32,65 +31,24 @@ export interface VerificationOptions {
   signal?: AbortSignal;
 }
 
-// looks for config files to guess the test command, null if nothing matches
-async function detectTestRunner(cwd: string): Promise<string | null> {
-  const checks: Array<{ file: string; cmd: string }> = [
-    { file: 'package.json', cmd: '' }, // needs special parsing
-    { file: 'pytest.ini', cmd: 'pytest' },
-    { file: 'pyproject.toml', cmd: 'pytest' },
-    { file: 'setup.cfg', cmd: 'pytest' },
-    { file: 'go.mod', cmd: 'go test ./...' },
-    { file: 'Cargo.toml', cmd: 'cargo test' },
-    { file: 'Makefile', cmd: '' }, // needs special parsing
-    { file: 'Gemfile', cmd: 'bundle exec rspec' },
-  ];
-
-  for (const { file, cmd } of checks) {
-    try {
-      await fs.access(path.join(cwd, file));
-      if (file === 'package.json') {
-        const raw = await fs.readFile(path.join(cwd, file), 'utf-8');
-        const pkg = JSON.parse(raw);
-        if (pkg.scripts?.test) {
-          return 'npm test';
-        }
-        if (pkg.devDependencies?.vitest || pkg.dependencies?.vitest) return 'npx vitest run';
-        if (pkg.devDependencies?.jest || pkg.dependencies?.jest) return 'npx jest';
-      } else if (file === 'Makefile') {
-        const raw = await fs.readFile(path.join(cwd, 'Makefile'), 'utf-8');
-        if (/^test\s*:/m.test(raw)) return 'make test';
-      } else if (cmd) {
-        return cmd;
-      }
-    } catch {
-      // file doesn't exist, continue
-    }
-  }
-  return null;
-}
-
+// The test command comes from the shared toolchain registry (settings `toolchain.test` first,
+// then package.json / Maven / Gradle / go / cargo / pytest / Makefile / rspec detection).
+// It runs through the toolchain runner, not the `shell` tool: that tool's sandbox profile
+// denies fork(), which every real test runner (npm, mvn, gradle, pytest-xdist) needs.
 async function runTestSuite(
-  testCmd: string,
+  test: TestCommand,
   cwd: string,
-  tools: Map<string, Tool>,
+  settings: Settings,
   signal?: AbortSignal,
 ): Promise<VerificationResult> {
-  const shellTool = tools.get('shell');
-  if (!shellTool) {
-    return { passed: false, details: 'shell tool not available', strategy: 'tests' };
-  }
-
   try {
-    const result = await shellTool.execute(
-      { command: testCmd, timeout: 120_000 },
-      { cwd, signal },
-    );
-    const passed = !result.isError;
-    return {
-      passed,
-      details: typeof result.output === 'string' ? result.output : JSON.stringify(result.output),
-      strategy: 'tests',
-    };
+    const result = await runToolchainCommand(test.command, cwd, {
+      timeoutMs: test.timeoutMs ?? 120_000,
+      sandbox: settings.sandbox !== 'off',
+      ...(signal ? { signal } : {}),
+    });
+    const details = result.timedOut ? `${test.label} timed out after ${Math.round((test.timeoutMs ?? 120_000) / 1000)}s\n${result.output}` : result.output;
+    return { passed: result.code === 0, details, strategy: 'tests' };
   } catch (err) {
     return {
       passed: false,
@@ -158,10 +116,10 @@ export async function runVerification(opts: VerificationOptions): Promise<Verifi
   const { mode } = opts;
 
   if (mode === 'tests') {
-    const testCmd = await detectTestRunner(cwd);
+    const testCmd = await detectTestCommand(cwd, opts.settings.toolchain);
     if (testCmd) {
-      logger.info('verification: running test suite', { cmd: testCmd });
-      return runTestSuite(testCmd, cwd, opts.tools, opts.signal);
+      logger.info('verification: running test suite', { cmd: testCmd.command });
+      return runTestSuite(testCmd, cwd, opts.settings, opts.signal);
     }
     return {
       passed: false,
@@ -184,10 +142,10 @@ export async function runVerification(opts: VerificationOptions): Promise<Verifi
   }
 
   // auto: try tests first, fall back to LLM
-  const testCmd = await detectTestRunner(cwd);
+  const testCmd = await detectTestCommand(cwd, opts.settings.toolchain);
   if (testCmd) {
-    logger.info('verification (auto): running test suite', { cmd: testCmd });
-    const result = await runTestSuite(testCmd, cwd, opts.tools, opts.signal);
+    logger.info('verification (auto): running test suite', { cmd: testCmd.command });
+    const result = await runTestSuite(testCmd, cwd, opts.settings, opts.signal);
     // report as-is even on failure, don't fall back to LLM for a "maybe"
     return result;
   }

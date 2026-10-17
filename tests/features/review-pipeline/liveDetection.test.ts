@@ -28,7 +28,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { DETECTION_FIXTURES, runDetectionFixture } from '../../../src/features/review-pipeline/testing/detectionFixtures.js';
+import { ALL_DETECTION_FIXTURES, runDetectionFixture } from '../../../src/features/review-pipeline/testing/detectionFixtures.js';
 import type { ProviderId } from '../../../src/core/types.js';
 
 const LIVE = process.env.CODEXREV_LIVE_LLM_TESTS === '1';
@@ -36,7 +36,7 @@ const providerId = (process.env.CODEXREV_LIVE_PROVIDER ?? 'ollama') as ProviderI
 const modelName = process.env.CODEXREV_LIVE_MODEL ?? (providerId === 'ollama' ? 'gemma4:12b-mlx' : 'gpt-4o-mini');
 
 describe.skipIf(!LIVE)('live detection against a real provider (opt-in — set CODEXREV_LIVE_LLM_TESTS=1)', () => {
-  for (const fixture of DETECTION_FIXTURES) {
+  for (const fixture of ALL_DETECTION_FIXTURES) {
     const expectation =
       fixture.expectRole === null
         ? 'flags nothing (clean baseline — false-positive check)'
