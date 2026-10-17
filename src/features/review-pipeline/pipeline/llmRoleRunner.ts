@@ -28,7 +28,6 @@ import {
 } from '../roles/roleContract.js';
 import { builtinTools } from '../../../tools/builtin.js';
 import type { Tool } from '../../../tools/registry.js';
-import { ProviderError } from '../../../core/types.js';
 import type {
   ContentPart,
   GenerateRequest,
@@ -40,7 +39,7 @@ import type {
 } from '../../../core/types.js';
 import type { DiffFile, ParsedDiff } from './diffReader.js';
 import type { RoleRunContext } from './roleRunContext.js';
-import type { ILLMProvider } from './illmProvider.js';
+import { transientReason, type ILLMProvider } from './illmProvider.js';
 
 // same three read-only tools Ask/Plan modes are restricted to
 const ROLE_TOOL_NAMES = ['read_file', 'glob', 'grep'] as const;
@@ -447,13 +446,17 @@ const BLOCKING_SEVERITIES = new Set<Severity>(['high', 'critical']);
 // prompt, and a stray "block" is expensive: Architect's block alone forces the
 // final decision to Block. So the contract is enforced here too, and any
 // correction is written into the summary so the report never hides it.
-const TRANSIENT_MESSAGE = /ECONNRESET|UND_ERR_SOCKET|ETIMEDOUT|EPIPE|socket hang up|fetch failed|Invalid response body/i;
-const RETRY_DELAYS_MS = [2_000, 6_000];
+// No retries by default: the provider from createLLMProvider (illmProvider.ts) already retries every
+// call, with the user told why. Retrying here as well multiplied the attempts (up to 12 per call).
+// Kept for an ILLMProvider supplied by a library caller, which can pass its own delays.
+const RETRY_DELAYS_MS: readonly number[] = [];
 
 // A role makes several model calls; one dropped connection (seen live: ECONNRESET
 // mid-response against a hosted endpoint) must not throw away the roles that
-// already finished. The SDKs already retry 429/5xx themselves; this covers what
-// they don't — connection drops while reading the response body.
+// already finished. This used to be the only retry, and it never fired for that
+// very error: it accepted only ProviderError, and the adapter reported a dropped
+// connection as LocalServerError. The decision now uses illmProvider.ts's
+// transientReason(), the one rule for every retry in the pipeline.
 // generateWithRetry plus bookkeeping for the timing report
 async function generateRecorded(ctx: RoleRunContext, req: GenerateRequest): Promise<GenerateResponse> {
   const res = await generateWithRetry(ctx.llm, req);
@@ -470,8 +473,7 @@ export async function generateWithRetry(
     try {
       return await llm.generate(req);
     } catch (err) {
-      const transient = err instanceof ProviderError && TRANSIENT_MESSAGE.test(err.message);
-      if (!transient || attempt >= delaysMs.length) throw err;
+      if (transientReason(err, llm.id) === null || attempt >= delaysMs.length) throw err;
       await new Promise((resolve) => setTimeout(resolve, delaysMs[attempt]));
     }
   }

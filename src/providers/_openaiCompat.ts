@@ -184,18 +184,22 @@ export abstract class OpenAICompatGenerator implements ContentGenerator {
       message?: string;
       cause?: { code?: string; message?: string };
     };
-    // connection-level errors get turned into LocalServerError so a missing daemon
+    // a server that cannot be reached at all gets LocalServerError, so a missing daemon
     // shows a fix-it hint instead of a raw stack trace
     const causeCode = e?.code ?? e?.cause?.code;
-    if (
-      causeCode === 'ECONNREFUSED' ||
-      causeCode === 'ENOTFOUND' ||
-      causeCode === 'EHOSTUNREACH' ||
-      causeCode === 'ETIMEDOUT' ||
-      causeCode === 'UND_ERR_SOCKET' ||
-      causeCode === 'ECONNRESET'
-    ) {
+    if (causeCode === 'ECONNREFUSED' || causeCode === 'ENOTFOUND' || causeCode === 'EHOSTUNREACH') {
       throw new LocalServerError(this.provider, this.defaultBaseUrl, e?.message ?? causeCode ?? 'connection failed');
+    }
+    // the server was reached and the connection then dropped or stalled: a network/server-side
+    // interruption, not a service that needs starting — and worth retrying (marked retryable)
+    if (causeCode === 'ETIMEDOUT' || causeCode === 'ECONNRESET' || causeCode === 'UND_ERR_SOCKET' || causeCode === 'EPIPE') {
+      return new ProviderError(
+        `${e?.message ?? causeCode} — the connection to ${this.provider} at ${this.defaultBaseUrl} was interrupted (network or server side), not refused; the service is reachable.`,
+        this.provider,
+        undefined,
+        causeCode,
+        true,
+      );
     }
     return new ProviderError(
       e?.message ?? `${this.provider} request failed`,
