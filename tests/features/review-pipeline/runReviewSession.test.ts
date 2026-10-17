@@ -166,46 +166,49 @@ function crashingFixProvider(): ILLMProvider {
 }
 
 describe('runReviewSession — fix loop crash resilience (reported live: a mid-loop ProviderError skipped both reports)', () => {
-  it('still writes the audit trail and the scan report, and still surfaces the original error, when the fix loop crashes mid-run', async () => {
+  // Later live report: the loop crashing on a dropped connection also threw the run's result away and showed
+  // the pre-fix verdict as if nothing had been applied. A model that cannot be reached now ends the loop as
+  // 'interrupted' instead of crashing it, and the session reports what was and was not re-reviewed.
+  it('ends the loop as interrupted, keeps the audit trail and both reports, and keeps the pre-fix decision for fixes no review has seen', async () => {
     const git = simpleGit({ baseDir: tmpRoot });
     const appFile = path.join(tmpRoot, 'app.ts');
     await fs.writeFile(appFile, "const conn = pool.acquire();\nreturn conn.query(id); // LEAK: connection never released\n", 'utf-8');
     await git.add('app.ts');
 
-    await expect(
-      runReviewSession({
-        cwd: tmpRoot,
-        forceNonInteractive: true,
-        fix: true,
-        fixStrategy: 'classic', // pins the original single-edit loop; the robust path has its own tests (fixRobust.test.ts)
-        maxIterations: 3,
-        llmOverride: crashingFixProvider(),
-      }),
-    ).rejects.toBeInstanceOf(ProviderError);
+    const result = await runReviewSession({
+      cwd: tmpRoot,
+      forceNonInteractive: true,
+      fix: true,
+      fixStrategy: 'classic', // pins the original single-edit loop; the robust path has its own tests (fixRobust.test.ts)
+      maxIterations: 3,
+      llmOverride: crashingFixProvider(),
+    });
 
-    // The fix that DID land before the crash is durably audit-logged —
-    // `onFixAttempt` is awaited per-fix, so this entry was written to
-    // disk well before the re-run that crashed.
+    expect(result.breakerBuilder?.outcome).toBe('interrupted');
+    // the fix landed, but the re-run that would have judged it never finished
+    expect(result.breakerBuilder?.fixAttempts).toHaveLength(1);
+    expect(result.breakerBuilder?.interruption?.verdictCurrent).toBe(false);
+
+    // The fix that DID land is durably audit-logged — `onFixAttempt` is
+    // awaited per-fix, so this entry was written before the re-run failed.
     const entries = await readAuditLog(tmpRoot);
     expect(entries.some((e) => e.type === 'fix_attempt')).toBe(true);
 
     // The run still ends with a resolver_decision line (Golden Rule:
-    // never skip the audit log) — reflecting the PRE-FIX decision, since
-    // the crash means the fix loop's outcome is not confirmed-good.
+    // never skip the audit log) — the PRE-FIX decision, since no complete
+    // review has seen the applied fix.
     const last = entries[entries.length - 1];
     expect(last.type).toBe('resolver_decision');
     if (last.type === 'resolver_decision') {
       expect(last.decision).toBe('block'); // Architect's pre-fix veto, unchanged
     }
+    expect(result.resolver.decision).toBe('block');
 
-    // The scan report still got written — this is exactly the reported
-    // bug: it previously did not, when the fix loop crashed.
+    // Both reports are written: the scan report, and a fix report that records what was applied and why it stopped.
     const reportsDir = path.join(tmpRoot, '.codexrev', 'review-pipeline', 'reports');
     const files = await fs.readdir(reportsDir);
     expect(files.some((f) => f.startsWith('scan-') && f.endsWith('.html'))).toBe(true);
-    // No fix report — the loop never finished, so there's nothing
-    // confirmed-good to summarize yet.
-    expect(files.some((f) => f.startsWith('fix-'))).toBe(false);
+    expect(files.some((f) => f.startsWith('fix-') && f.endsWith('.html'))).toBe(true);
   });
 });
 

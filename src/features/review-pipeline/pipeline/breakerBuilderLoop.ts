@@ -81,9 +81,16 @@ import type { VerificationContext } from './roleRunContext.js';
 import { builtinTools } from '../../../tools/builtin.js';
 import { TEST_FILE, type ToolchainOptions } from '../../../core/toolchains/index.js';
 import type { ContextAggregator } from './contextAggregator.js';
-import type { ILLMProvider } from './illmProvider.js';
+import { transientReason, type ILLMProvider } from './illmProvider.js';
+import { ProviderError } from '../../../core/types.js';
+import { LocalServerError } from '../../../utils/errors.js';
 import type { RoleRunContext } from './roleRunContext.js';
 import type { InteractionChannel } from '../../../core/interaction.js';
+
+// a model call that failed for good (illmProvider.ts already retried the transient ones) — as opposed to a bug here
+function isModelUnavailable(err: unknown, providerId: string): boolean {
+  return err instanceof ProviderError || err instanceof LocalServerError || transientReason(err, providerId) !== null;
+}
 
 // per-file retry cap, hard limit, not configurable
 export const MAX_RETRIES_PER_FILE = 3;
@@ -101,7 +108,8 @@ export interface FixAttemptRecord {
   readonly newString: string;
 }
 
-export type BreakerBuilderOutcome = 'resolved' | 'escalated' | 'skipped' | 'aborted';
+// interrupted: a model call failed for good (unreachable after retries, or rejected) partway through; see BreakerBuilderResult.interruption
+export type BreakerBuilderOutcome = 'resolved' | 'escalated' | 'skipped' | 'aborted' | 'interrupted';
 
 export interface BreakerBuilderResult {
   readonly outcome: BreakerBuilderOutcome;
@@ -112,6 +120,17 @@ export interface BreakerBuilderResult {
   readonly notes?: readonly string[];
   /** where the fix's wall time went, by phase (observation only) */
   readonly timings?: ReadonlyArray<{ readonly label: string; readonly ms: number }>;
+  /** set when outcome is 'interrupted' */
+  readonly interruption?: {
+    /** the model error that stopped the loop */
+    readonly reason: string;
+    /**
+     * true when the role verdicts the caller holds are a complete review of the code now on disk (nothing
+     * was applied after the last full re-review), so the decision can be taken from them; false when fixes
+     * were applied that no complete review has seen — the code is then unverified and must be re-scanned
+     */
+    readonly verdictCurrent: boolean;
+  };
 }
 
 export interface RunBreakerBuilderLoopOptions {
@@ -362,7 +381,13 @@ export async function restoreDeletedFiles(
   cwd: string,
   diffRef: string | undefined,
 ): Promise<DeletedFileRestore | null> {
-  const deleted = diff.files.filter((f) => f.status === 'deleted').map((f) => f.path);
+  // A file deleted while one of the same name is added elsewhere was MOVED (src/components/TodoList.test.tsx →
+  // src/__tests__/TodoList.test.tsx): git reports a delete + add instead of a rename once the content changed
+  // enough. Restoring it would leave two copies of the same suite — what reviewers flag next is the duplicate.
+  const addedNames = new Set(diff.files.filter((f) => f.status === 'added').map((f) => path.posix.basename(f.path).toLowerCase()));
+  const deleted = diff.files
+    .filter((f) => f.status === 'deleted' && !addedNames.has(path.posix.basename(f.path).toLowerCase()))
+    .map((f) => f.path);
   if (deleted.length === 0) return null;
   const covered = findings.filter((b) => deleted.includes(b.finding.file));
   if (covered.length === 0) return null;
@@ -618,8 +643,10 @@ export async function runBreakerBuilderLoop(opts: RunBreakerBuilderLoopOptions):
     return result(still.length === 0 ? 'resolved' : 'escalated', iterations, still.map((b) => b.finding));
   }
 
+  let currentIteration = 0;
   try {
     for (let iteration = 1; iteration <= opts.maxIterations; iteration++) {
+      currentIteration = iteration;
       let blockingRoles = collectBlockingRoles(opts.aggregator);
       let blocking = collectBlockingFindings(opts.aggregator, blockingRoles);
 
@@ -1063,6 +1090,19 @@ export async function runBreakerBuilderLoop(opts: RunBreakerBuilderLoopOptions):
 
     // ran out of iterations — check once more if the last re-run actually cleared it
     return await conclude(opts.maxIterations);
+  } catch (err) {
+    // A model call failed for good: unreachable even after the provider's retries, or rejected by it. Fixes already applied to the project
+    // passed their checks and stay; what the caller needs is an honest account of what has been reviewed,
+    // not a crash that throws the whole run away and shows the pre-fix verdict as if nothing happened.
+    if (!isModelUnavailable(err, opts.llm.id)) throw err;
+    const reason = err instanceof Error ? err.message : String(err);
+    addNote(
+      fullPassCurrent
+        ? `Stopped early: a model call failed (${reason}). Nothing was applied after the last full re-review, so its verdicts describe the code as it is now.`
+        : `Stopped early: a model call failed (${reason}). ${fixAttempts.length} fix(es) were applied, but the re-review of the latest ones did not finish — run \`codexrev review scan\` again to verify them.`,
+    );
+    const still = collectBlockingFindings(opts.aggregator, collectBlockingRoles(opts.aggregator)).map((b) => b.finding);
+    return { ...result('interrupted', currentIteration, still), interruption: { reason, verdictCurrent: fullPassCurrent } };
   } finally {
     await sandbox?.cleanup();
     // a copy prepared during the scan that this run never adopted (nothing needed fixing, or the project changed)

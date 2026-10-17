@@ -175,6 +175,17 @@ function printBreakerBuilderOutcomeBody(result: BreakerBuilderResult): void {
     }
     return;
   }
+  if (result.outcome === 'interrupted') {
+    const current = result.interruption?.verdictCurrent === true;
+    console.log(
+      `\n${c.bold}${c.yellow}⚠ Breaker-Builder interrupted${c.reset} in iteration ${result.iterations} — a model call failed (see the note below). ` +
+        `${result.fixAttempts.length} fix(es) applied before that stay in your project. ` +
+        (current
+          ? 'The last full re-review saw exactly this code, so the decision below is current.'
+          : 'They were not all re-reviewed: the decision below is from before them — run `codexrev review scan` again to verify.'),
+    );
+    return;
+  }
   if (result.outcome === 'skipped') {
     console.log(`\n${c.bold}${c.yellow}⏭ Breaker-Builder stopped (skip)${c.reset} after ${result.iterations} iteration(s).`);
     return;

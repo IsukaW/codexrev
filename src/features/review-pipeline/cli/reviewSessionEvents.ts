@@ -18,7 +18,9 @@ export type ReviewSessionEvent =
   | { readonly type: 'fix_batch_ready'; readonly candidates: readonly FixCandidate[]; readonly iteration: number }
   | { readonly type: 'fix_attempt'; readonly record: FixAttemptRecord }
   | { readonly type: 'fix_role_rerun'; readonly output: RoleOutput }
-  | { readonly type: 'fix_status'; readonly message: string };
+  | { readonly type: 'fix_status'; readonly message: string }
+  // something worth a line that is not tied to a role or the fix loop, e.g. a model call being retried
+  | { readonly type: 'notice'; readonly message: string };
 
 export class ReviewSessionEventBus {
   private readonly emitter = new EventEmitter();

@@ -439,6 +439,7 @@ const OUTCOME_COLOR: Record<BreakerBuilderOutcome, string> = {
   escalated: '#cf222e',
   skipped: '#9a6700',
   aborted: '#cf222e',
+  interrupted: '#9a6700',
 };
 
 const OUTCOME_LABEL: Record<BreakerBuilderOutcome, string> = {
@@ -446,6 +447,7 @@ const OUTCOME_LABEL: Record<BreakerBuilderOutcome, string> = {
   escalated: 'Escalated',
   skipped: 'Stopped (skip)',
   aborted: 'Aborted',
+  interrupted: 'Interrupted (model call failed)',
 };
 
 const FIXER_STAGE_COLOR: Record<FixAttemptRecord['fixerStage'], string> = {
@@ -467,6 +469,9 @@ function fixOutcomeRationale(data: FixReportData): string {
   }
   if (data.outcome === 'escalated') {
     return `Hit its limits after ${data.iterations} iteration(s) with ${data.unresolvedFindings.length} blocking finding(s) still unresolved — manual attention needed.`;
+  }
+  if (data.outcome === 'interrupted') {
+    return `Stopped in iteration ${data.iterations} because a model call failed. ${fixLabel} applied before that stay in the project — see the notes for whether they were re-reviewed.`;
   }
   if (data.outcome === 'skipped') {
     return `Stopped by a Skip decision after ${data.iterations} iteration(s). ${fixLabel} were applied before stopping.`;

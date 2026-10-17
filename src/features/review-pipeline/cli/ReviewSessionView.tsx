@@ -21,7 +21,7 @@
  * gate) so one `gate` state and one `detailsFor` state serve both.
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Box, Text } from 'ink';
 import Spinner from 'ink-spinner';
 import { diffLines } from 'diff';
@@ -232,6 +232,12 @@ const FixLogLine: React.FC<{ entry: FixLogEntry }> = ({ entry }) => {
 export const ReviewSessionView: React.FC<ReviewSessionViewProps> = ({ events, interactionChannel }) => {
   const [log, setLog] = useState<RoleLogEntry[]>([]);
   const [fixLog, setFixLog] = useState<FixLogEntry[]>([]);
+  // notices before the fix loop starts show under the roles; once it has started they join its log, in order
+  const [notices, setNotices] = useState<string[]>([]);
+  const fixStarted = useRef(false);
+  useEffect(() => {
+    if (fixLog.length > 0) fixStarted.current = true;
+  }, [fixLog.length]);
   // Every LLM-generated candidate for the iteration currently awaiting
   // the batch gate — replaced wholesale by 'fix_batch_ready', not
   // accumulated, so it always reflects exactly what's pending right now.
@@ -296,6 +302,9 @@ export const ReviewSessionView: React.FC<ReviewSessionViewProps> = ({ events, in
             },
           ];
         });
+      } else if (event.type === 'notice') {
+        if (fixStarted.current) setFixLog((prev) => [...prev, { key: `status-${prev.length}`, kind: 'status', message: event.message }]);
+        else setNotices((prev) => [...prev, event.message]);
       } else if (event.type === 'fix_status') {
         setFixLog((prev) => [...prev, { key: `status-${prev.length}`, kind: 'status', message: event.message }]);
       } else if (event.type === 'fix_role_rerun') {
@@ -347,6 +356,12 @@ export const ReviewSessionView: React.FC<ReviewSessionViewProps> = ({ events, in
           {detailsFor === entry.role && entry.findings && <FindingsBlock findings={entry.findings} />}
           {gate && gate.stage === entry.role && <StageGatePrompt request={gate} onDecision={handleDecision} />}
         </Box>
+      ))}
+
+      {notices.map((message, i) => (
+        <Text key={`notice-${i}`} dimColor>
+          … {message}
+        </Text>
       ))}
 
       {fixLog.length > 0 && (

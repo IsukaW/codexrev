@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { simpleGit } from 'simple-git';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { applyEditsAtomically, asksOnlyForTests, collectActionableFindings, groupFixTasks, isTestFile, runBreakerBuilderLoop, splitTemporaryTests } from '../../../src/features/review-pipeline/pipeline/breakerBuilderLoop.js';
+import { applyEditsAtomically, asksOnlyForTests, collectActionableFindings, groupFixTasks, isTestFile, restoreDeletedFiles, runBreakerBuilderLoop, splitTemporaryTests } from '../../../src/features/review-pipeline/pipeline/breakerBuilderLoop.js';
 import { ContextAggregator } from '../../../src/features/review-pipeline/pipeline/contextAggregator.js';
 import { runFixAgent, type FixTask } from '../../../src/features/review-pipeline/pipeline/fixAgent.js';
 import { createSandbox } from '../../../src/features/review-pipeline/pipeline/fixSandbox.js';
@@ -11,7 +11,7 @@ import { compareValidation, detectTestCommand, runValidation, type ValidationSna
 import { findLocalTscBinary, parseJsonc, resolveTscReferencedProjects, runBuildRole } from '../../../src/features/review-pipeline/roles/build.js';
 import { readDiff, type ParsedDiff } from '../../../src/features/review-pipeline/pipeline/diffReader.js';
 import type { ILLMProvider } from '../../../src/features/review-pipeline/pipeline/illmProvider.js';
-import type { GenerateRequest, GenerateResponse } from '../../../src/core/types.js';
+import { ProviderError, type GenerateRequest, type GenerateResponse } from '../../../src/core/types.js';
 import type { Finding, RoleOutput } from '../../../src/features/review-pipeline/roles/roleContract.js';
 
 const EMPTY_DIFF: ParsedDiff = { ref: 'staged', raw: '', files: [] };
@@ -770,3 +770,96 @@ describe('runBreakerBuilderLoop — a change that deletes test files', () => {
     expect(result.unresolvedFindings).toEqual([]);
   }, 120_000);
 });
+
+// From a live run: round 1 was applied and fully re-reviewed, then the endpoint dropped the connection
+// while the fixer worked on round 2 — the loop crashed and the session showed the PRE-fix Block.
+describe('runBreakerBuilderLoop — the model becomes unreachable partway', () => {
+  const dropped = (): ProviderError =>
+    new ProviderError('Invalid response body while trying to fetch https://x/v1/chat/completions: read ECONNRESET', 'openai', undefined, 'ECONNRESET', true);
+
+  async function setup(): Promise<ContextAggregator> {
+    await fs.writeFile(path.join(tmpRoot, 'package.json'), '{}');
+    await fs.writeFile(path.join(tmpRoot, 'app.js'), '// buggy\n');
+    const aggregator = new ContextAggregator(EMPTY_DIFF);
+    aggregator.addRoleOutput(blocking('dev', 'dev-1'));
+    return aggregator;
+  }
+  const fixApp = [{ tool: 'edit', args: { file_path: 'app.js', old_string: 'buggy', new_string: 'fixed' } }, FIXED];
+
+  it('after a complete re-review: stops with "interrupted", keeps the fix, and its verdicts are current', async () => {
+    const aggregator = await setup();
+    const { llm } = scriptedLlm({
+      agent: [fixApp],
+      // the re-review still finds something medium in QA, so a second round starts
+      role: (role) => (role === 'qa' ? { role: 'qa', verdict: 'flag', findings: [{ ...finding('qa-1'), severity: 'medium' }], summary: 's', confidence: 0.9 } : pass(role)),
+    });
+    let fixerConversations = 0;
+    const flaky: ILLMProvider = {
+      ...llm,
+      generate: async (req) => {
+        // the endpoint stays down from the second fixer conversation on
+        if ((req.systemInstruction ?? '').includes('You are the Fixer') && req.messages.length === 1 && ++fixerConversations >= 2) throw dropped();
+        return llm.generate(req);
+      },
+    };
+    const result = await runBreakerBuilderLoop({ aggregator, llm: flaky, model: 'm', cwd: tmpRoot, maxIterations: 3, finalVerification: true, agent: true, fixAdvisory: true });
+
+    expect(result.outcome).toBe('interrupted');
+    expect(result.iterations).toBe(2);
+    expect(result.interruption).toMatchObject({ verdictCurrent: true, reason: expect.stringMatching(/ECONNRESET/) });
+    expect(await fs.readFile(path.join(tmpRoot, 'app.js'), 'utf-8')).toBe('// fixed\n');
+    expect(aggregator.getRoleOutput('dev')?.verdict).toBe('pass'); // the re-review's verdict, not the pre-fix block
+    expect(result.notes?.join(' ')).toMatch(/its verdicts describe the code as it is now/);
+  });
+
+  it('partway through a re-review: the fix stays, but the verdicts are marked as not describing it', async () => {
+    const aggregator = await setup();
+    const { llm } = scriptedLlm({ agent: [fixApp], role: pass });
+    const flaky: ILLMProvider = {
+      ...llm,
+      generate: async (req) => {
+        if (!(req.systemInstruction ?? '').includes('You are the Fixer')) throw dropped();
+        return llm.generate(req);
+      },
+    };
+    const result = await runBreakerBuilderLoop({ aggregator, llm: flaky, model: 'm', cwd: tmpRoot, maxIterations: 3, finalVerification: true, agent: true });
+
+    expect(result.outcome).toBe('interrupted');
+    expect(result.interruption?.verdictCurrent).toBe(false);
+    expect(result.fixAttempts).toHaveLength(1);
+    expect(await fs.readFile(path.join(tmpRoot, 'app.js'), 'utf-8')).toBe('// fixed\n');
+    expect(aggregator.getRoleOutput('dev')?.verdict).toBe('block'); // untouched: no complete pass replaced it
+    expect(result.notes?.join(' ')).toMatch(/run `codexrev review scan` again/);
+  });
+
+  it('a bug that is not the model being unreachable still surfaces as an error', async () => {
+    const aggregator = await setup();
+    const { llm } = scriptedLlm({ agent: [fixApp], role: pass });
+    const broken: ILLMProvider = { ...llm, generate: async () => { throw new TypeError('x is not a function'); } };
+    await expect(runBreakerBuilderLoop({ aggregator, llm: broken, model: 'm', cwd: tmpRoot, maxIterations: 3, finalVerification: true, agent: true })).rejects.toThrow(TypeError);
+  });
+});
+
+describe('restoreDeletedFiles — a moved file is not a deleted one', () => {
+  it('does not bring back a test the change moved to another folder (git saw delete + add, not a rename)', async () => {
+    const git = simpleGit({ baseDir: tmpRoot });
+    await fs.mkdir(path.join(tmpRoot, 'src/components'), { recursive: true });
+    await fs.writeFile(path.join(tmpRoot, 'src/components/TodoList.test.tsx'), 'old colocated suite\n');
+    await fs.writeFile(path.join(tmpRoot, 'src/services.test.ts'), 'a suite that is really gone\n');
+    await git.add('.');
+    await git.commit('base');
+    const base = (await git.revparse(['HEAD'])).trim();
+    await fs.rm(path.join(tmpRoot, 'src/components/TodoList.test.tsx'));
+    await fs.rm(path.join(tmpRoot, 'src/services.test.ts'));
+    await fs.mkdir(path.join(tmpRoot, 'src/__tests__'), { recursive: true });
+    await fs.writeFile(path.join(tmpRoot, 'src/__tests__/TodoList.test.tsx'), 'a rewritten suite, different enough that git does not call it a rename\n'.repeat(5));
+    await git.add('.');
+    await git.commit('move and delete tests');
+    const diff = await readDiff(tmpRoot, base);
+    const flagged = (file: string) => ({ role: 'ba' as const, finding: { ...finding('f'), file, description: 'The diff deletes this test suite.' } });
+
+    const restore = await restoreDeletedFiles([flagged('src/components/TodoList.test.tsx'), flagged('src/services.test.ts')], diff, tmpRoot, base);
+    expect(restore?.edits.map((e) => e.file)).toEqual(['src/services.test.ts']);
+  });
+});
+

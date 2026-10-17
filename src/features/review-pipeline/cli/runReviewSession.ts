@@ -104,7 +104,15 @@ export async function runReviewSession(opts: ReviewSessionOptions): Promise<Revi
   const urs = opts.ursPath ? await fs.readFile(opts.ursPath, 'utf-8') : undefined;
   const diff = await readDiff(opts.cwd, opts.diffRef);
 
-  const llm = opts.llmOverride ?? createLLMProvider(settings);
+  // a dropped connection is retried with a pause (illmProvider.ts); say so, or a 30s wait looks like a hang.
+  // Assigned once the UI exists — retries only happen while roles or the fixer are running.
+  let announceRetry = (message: string): void => console.log(`… ${message}`);
+  const llm =
+    opts.llmOverride ??
+    createLLMProvider(settings, undefined, {
+      onRetry: ({ attempt, of, delayMs, reason }) =>
+        announceRetry(`Model ${reason} — retrying in ${Math.round(delayMs / 1000)}s (attempt ${attempt} of ${of})…`),
+    });
   const model = settings.providers[settings.provider]?.model ?? settings.model;
 
   const interactive = !opts.forceNonInteractive && process.stdout.isTTY === true;
@@ -147,6 +155,7 @@ export async function runReviewSession(opts: ReviewSessionOptions): Promise<Revi
   // same fix as the raw-mode bug, just covering the whole session now
   const interaction = interactive ? new InteractionChannel() : undefined;
   const events = interactive ? new ReviewSessionEventBus() : undefined;
+  if (events) announceRetry = (message) => events.emit({ type: 'notice', message });
   const app =
     interactive && events && interaction
       ? render(React.createElement(ReviewSessionView, { events, interactionChannel: interaction }))
@@ -238,8 +247,11 @@ export async function runReviewSession(opts: ReviewSessionOptions): Promise<Revi
             : (output) => printVerdictLine(output),
         });
         if (!interactive) printBreakerBuilderOutcome(breakerBuilder);
-        // recompute — loop mutated pipeline.aggregator in place, so this reflects post-fix state
-        resolverResult = resolve(pipeline.aggregator.toJSON().roleOutputs, settings.reviewPipeline.resolverWeights);
+        // recompute — loop mutated pipeline.aggregator in place, so this reflects post-fix state. The one
+        // exception: a loop interrupted (a model call failed) after applying fixes no complete review has seen —
+        // its verdicts then describe older code, and the pre-fix decision is the honest one to keep
+        const unverified = breakerBuilder.outcome === 'interrupted' && breakerBuilder.interruption?.verdictCurrent !== true;
+        if (!unverified) resolverResult = resolve(pipeline.aggregator.toJSON().roleOutputs, settings.reviewPipeline.resolverWeights);
 
         // second HTML report, saved alongside the scan report and paired by runId
         const fixReportDir = opts.outputDir ? path.resolve(opts.cwd, opts.outputDir) : defaultReportsDir(opts.cwd);
