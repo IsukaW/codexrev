@@ -1,0 +1,34 @@
+{
+  "id": "error-handling-propagate-timeout",
+  "title": "Swallowed gateway timeouts now propagate to the caller",
+  "category": "behaviour",
+  "isRefactor": false,
+  "diff": {
+    "files": [
+      {
+        "path": "src/payment.js",
+        "before": "export async function charge(amount) {\n  try {\n    return await gateway.charge(amount);\n  } catch (err) {\n    return { ok: false };\n  }\n}\n",
+        "after": "export async function charge(amount) {\n  return await gateway.charge(amount);\n}\n"
+      }
+    ]
+  },
+  "urs": {
+    "sections": [
+      {
+        "id": "req-export",
+        "title": "Exports",
+        "text": "Reports must be exportable as CSV."
+      }
+    ]
+  },
+  "expected": {
+    "driftStatus": "new",
+    "implications": [
+      {
+        "text": "Timeout errors from the payment gateway must propagate to the caller instead of being swallowed.",
+        "category": "behaviour"
+      }
+    ],
+    "testDeltaTopics": ["timeout", "propagate"]
+  }
+}

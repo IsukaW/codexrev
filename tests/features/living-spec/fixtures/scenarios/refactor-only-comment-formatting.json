@@ -1,0 +1,29 @@
+{
+  "id": "refactor-only-comment-formatting",
+  "title": "Comment and formatting cleanup only (false-alert probe)",
+  "category": "refactor",
+  "isRefactor": true,
+  "diff": {
+    "files": [
+      {
+        "path": "src/util.js",
+        "before": "//helper\nexport function clamp(n,min,max){if(n<min)return min;if(n>max)return max;return n;}\n",
+        "after": "// Clamp a value into the inclusive [min, max] range.\nexport function clamp(n, min, max) {\n  if (n < min) return min;\n  if (n > max) return max;\n  return n;\n}\n"
+      }
+    ]
+  },
+  "urs": {
+    "sections": [
+      {
+        "id": "req-clamp",
+        "title": "Clamp range",
+        "text": "Clamped values must stay within the inclusive range."
+      }
+    ]
+  },
+  "expected": {
+    "driftStatus": "no-semantic-change",
+    "implications": [],
+    "testDeltaTopics": []
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "id": "security-auth-check-added",
+  "title": "Admin routes gain an authenticated-session check (new security requirement)",
+  "category": "security",
+  "isRefactor": false,
+  "diff": {
+    "files": [
+      {
+        "path": "src/adminRoutes.js",
+        "before": "export function adminOnly(req, res, next) {\n  next();\n}\n",
+        "after": "export function adminOnly(req, res, next) {\n  if (!req.session || req.session.role !== 'admin') {\n    return res.status(403).json({ error: 'forbidden' });\n  }\n  next();\n}\n"
+      }
+    ]
+  },
+  "urs": {
+    "sections": [
+      {
+        "id": "req-export",
+        "title": "Exports",
+        "text": "Reports must be exportable as CSV."
+      }
+    ]
+  },
+  "expected": {
+    "driftStatus": "new",
+    "implications": [
+      {
+        "text": "Admin routes must require an authenticated session with the admin role.",
+        "kind": "nfr",
+        "category": "security"
+      }
+    ],
+    "testDeltaTopics": ["admin", "authenticated"]
+  }
+}

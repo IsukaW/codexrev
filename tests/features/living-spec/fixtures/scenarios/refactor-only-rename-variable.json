@@ -1,0 +1,29 @@
+{
+  "id": "refactor-only-rename-variable",
+  "title": "Rename a local variable (false-alert probe)",
+  "category": "refactor",
+  "isRefactor": true,
+  "diff": {
+    "files": [
+      {
+        "path": "src/report.js",
+        "before": "export function summarize(rows) {\n  let total = 0;\n  for (const row of rows) total += row.amount;\n  return { total };\n}\n",
+        "after": "export function summarize(rows) {\n  let accumulated = 0;\n  for (const row of rows) accumulated += row.amount;\n  return { total: accumulated };\n}\n"
+      }
+    ]
+  },
+  "urs": {
+    "sections": [
+      {
+        "id": "req-report-total",
+        "title": "Report total",
+        "text": "Reports must show the summed amount as the total."
+      }
+    ]
+  },
+  "expected": {
+    "driftStatus": "no-semantic-change",
+    "implications": [],
+    "testDeltaTopics": []
+  }
+}

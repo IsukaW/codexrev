@@ -1,0 +1,34 @@
+{
+  "id": "aligned-greeting-confirmation",
+  "title": "Test-only change that reaffirms the existing greeting requirement",
+  "category": "behaviour",
+  "isRefactor": false,
+  "diff": {
+    "files": [
+      {
+        "path": "test/greeting.test.js",
+        "before": "test('greet', () => {\n  expect(greet('ada')).toBeTruthy();\n});\n",
+        "after": "test('greet includes the caller name', () => {\n  expect(greet('ada')).toContain('ada');\n});\n"
+      }
+    ]
+  },
+  "urs": {
+    "sections": [
+      {
+        "id": "req-greeting",
+        "title": "Greeting",
+        "text": "The greeting must include the caller name."
+      }
+    ]
+  },
+  "expected": {
+    "driftStatus": "aligned",
+    "implications": [
+      {
+        "text": "The greeting must include the caller name.",
+        "category": "behaviour"
+      }
+    ],
+    "testDeltaTopics": ["greeting", "caller"]
+  }
+}

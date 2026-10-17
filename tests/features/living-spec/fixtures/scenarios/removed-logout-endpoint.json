@@ -1,0 +1,34 @@
+{
+  "id": "removed-logout-endpoint",
+  "title": "Logout endpoint removed (contradicts the living URS)",
+  "category": "behaviour",
+  "isRefactor": false,
+  "diff": {
+    "files": [
+      {
+        "path": "src/routes.js",
+        "before": "export function registerRoutes(app) {\n  app.post('/login', login);\n  app.post('/logout', logout);\n  app.get('/session', session);\n}\n",
+        "after": "export function registerRoutes(app) {\n  app.post('/login', login);\n  app.get('/session', session);\n}\n"
+      }
+    ]
+  },
+  "urs": {
+    "sections": [
+      {
+        "id": "req-logout",
+        "title": "Logout",
+        "text": "Users must be able to log out of the application."
+      }
+    ]
+  },
+  "expected": {
+    "driftStatus": "conflicting",
+    "implications": [
+      {
+        "text": "The application must no longer allow users to log out.",
+        "category": "behaviour"
+      }
+    ],
+    "testDeltaTopics": ["logout"]
+  }
+}

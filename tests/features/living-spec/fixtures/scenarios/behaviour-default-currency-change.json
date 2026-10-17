@@ -1,0 +1,34 @@
+{
+  "id": "behaviour-default-currency-change",
+  "title": "Default invoice currency switches from USD to EUR",
+  "category": "behaviour",
+  "isRefactor": false,
+  "diff": {
+    "files": [
+      {
+        "path": "src/invoice.js",
+        "before": "const DEFAULT_CURRENCY = 'USD';\nexport function createInvoice(items) {\n  return { items, currency: DEFAULT_CURRENCY };\n}\n",
+        "after": "const DEFAULT_CURRENCY = 'EUR';\nexport function createInvoice(items) {\n  return { items, currency: DEFAULT_CURRENCY };\n}\n"
+      }
+    ]
+  },
+  "urs": {
+    "sections": [
+      {
+        "id": "req-currency",
+        "title": "Invoice currency",
+        "text": "Invoices must default to the USD currency."
+      }
+    ]
+  },
+  "expected": {
+    "driftStatus": "modified",
+    "implications": [
+      {
+        "text": "Invoices must default to the EUR currency.",
+        "category": "behaviour"
+      }
+    ],
+    "testDeltaTopics": ["invoice", "currency"]
+  }
+}

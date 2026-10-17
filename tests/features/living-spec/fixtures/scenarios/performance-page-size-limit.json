@@ -1,0 +1,35 @@
+{
+  "id": "performance-page-size-limit",
+  "title": "Pagination cap raised from 50 to 200 items",
+  "category": "performance",
+  "isRefactor": false,
+  "diff": {
+    "files": [
+      {
+        "path": "src/list.js",
+        "before": "const MAX_PAGE_SIZE = 50;\nexport function normalizePage(query) {\n  const limit = Math.min(Number(query.limit) || 10, MAX_PAGE_SIZE);\n  return { limit };\n}\n",
+        "after": "const MAX_PAGE_SIZE = 200;\nexport function normalizePage(query) {\n  const limit = Math.min(Number(query.limit) || 10, MAX_PAGE_SIZE);\n  return { limit };\n}\n"
+      }
+    ]
+  },
+  "urs": {
+    "sections": [
+      {
+        "id": "req-page-size",
+        "title": "Page size",
+        "text": "The list endpoint must return at most 50 items per page."
+      }
+    ]
+  },
+  "expected": {
+    "driftStatus": "modified",
+    "implications": [
+      {
+        "text": "The list endpoint must return at most 200 items per page.",
+        "kind": "nfr",
+        "category": "performance"
+      }
+    ],
+    "testDeltaTopics": ["page", "items"]
+  }
+}

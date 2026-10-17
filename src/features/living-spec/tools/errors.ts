@@ -54,3 +54,11 @@ export class LivingSpecWatchError extends LivingSpecError {
     this.name = 'LivingSpecWatchError';
   }
 }
+
+/** Invalid evaluation scenario corpus or an unusable eval run. */
+export class LivingSpecEvalError extends LivingSpecError {
+  constructor(message: string) {
+    super(message, 'CODEXREV_LIVING_SPEC_EVAL');
+    this.name = 'LivingSpecEvalError';
+  }
+}

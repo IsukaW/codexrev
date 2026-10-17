@@ -1,0 +1,35 @@
+{
+  "id": "performance-rate-limiting-added",
+  "title": "Per-client rate limiting added (new NFR)",
+  "category": "performance",
+  "isRefactor": false,
+  "diff": {
+    "files": [
+      {
+        "path": "src/throttle.js",
+        "before": "export async function throttle(req) {\n  return true;\n}\n",
+        "after": "const WINDOW_MS = 60_000;\nconst MAX_REQUESTS = 60;\nconst buckets = new Map();\nexport async function throttle(req) {\n  const now = Date.now();\n  const bucket = buckets.get(req.clientId) ?? { count: 0, resetAt: now + WINDOW_MS };\n  if (now > bucket.resetAt) {\n    bucket.count = 0;\n    bucket.resetAt = now + WINDOW_MS;\n  }\n  bucket.count += 1;\n  buckets.set(req.clientId, bucket);\n  return bucket.count <= MAX_REQUESTS;\n}\n"
+      }
+    ]
+  },
+  "urs": {
+    "sections": [
+      {
+        "id": "req-greeting",
+        "title": "Greeting",
+        "text": "The greeting must include the caller name."
+      }
+    ]
+  },
+  "expected": {
+    "driftStatus": "new",
+    "implications": [
+      {
+        "text": "Each client must be limited to at most 60 API requests per minute.",
+        "kind": "nfr",
+        "category": "performance"
+      }
+    ],
+    "testDeltaTopics": ["rate", "requests"]
+  }
+}

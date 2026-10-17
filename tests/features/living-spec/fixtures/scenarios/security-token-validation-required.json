@@ -1,0 +1,35 @@
+{
+  "id": "security-token-validation-required",
+  "title": "Access-token validation becomes mandatory (conflicts with the permissive URS)",
+  "category": "security",
+  "isRefactor": false,
+  "diff": {
+    "files": [
+      {
+        "path": "src/middleware.js",
+        "before": "export function auth(req, res, next) {\n  next();\n}\n",
+        "after": "export function auth(req, res, next) {\n  const token = req.headers.authorization;\n  if (!token || !verifyToken(token)) {\n    return res.status(401).json({ error: 'invalid token' });\n  }\n  next();\n}\n"
+      }
+    ]
+  },
+  "urs": {
+    "sections": [
+      {
+        "id": "req-auth-tokens",
+        "title": "Access tokens",
+        "text": "API requests may be accepted without validating the access token."
+      }
+    ]
+  },
+  "expected": {
+    "driftStatus": "conflicting",
+    "implications": [
+      {
+        "text": "API requests must no longer be accepted without validating the access token.",
+        "kind": "nfr",
+        "category": "security"
+      }
+    ],
+    "testDeltaTopics": ["token", "unauthorized"]
+  }
+}

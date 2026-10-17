@@ -1,0 +1,34 @@
+{
+  "id": "api-interface-rename-serialize",
+  "title": "Public serializer method renamed (API surface change)",
+  "category": "api",
+  "isRefactor": false,
+  "diff": {
+    "files": [
+      {
+        "path": "src/serializer.js",
+        "before": "export class ModelSerializer {\n  toJSON() {\n    return { id: this.id, name: this.name };\n  }\n}\n",
+        "after": "export class ModelSerializer {\n  toExpandedJSON() {\n    return { id: this.id, name: this.name };\n  }\n}\n"
+      }
+    ]
+  },
+  "urs": {
+    "sections": [
+      {
+        "id": "req-serializer",
+        "title": "Serializer contract",
+        "text": "The serializer must expose a toJSON method for every public model."
+      }
+    ]
+  },
+  "expected": {
+    "driftStatus": "modified",
+    "implications": [
+      {
+        "text": "The serializer must expose a toExpandedJSON method for every public model.",
+        "category": "api"
+      }
+    ],
+    "testDeltaTopics": ["serializer", "model"]
+  }
+}

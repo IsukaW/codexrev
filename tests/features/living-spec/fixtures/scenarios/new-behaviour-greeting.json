@@ -1,0 +1,34 @@
+{
+  "id": "new-behaviour-greeting",
+  "title": "Greeting gains a time-of-day salutation (brand-new behaviour)",
+  "category": "behaviour",
+  "isRefactor": false,
+  "diff": {
+    "files": [
+      {
+        "path": "src/greeting.js",
+        "before": "export function greet(name) {\n  return `hello ${name}`;\n}\n",
+        "after": "export function greet(name) {\n  const hour = new Date().getHours();\n  const salutation = hour < 12 ? 'good morning' : 'good evening';\n  return `${salutation}, ${name}`;\n}\n"
+      }
+    ]
+  },
+  "urs": {
+    "sections": [
+      {
+        "id": "req-export",
+        "title": "Exports",
+        "text": "Reports must be exportable as CSV."
+      }
+    ]
+  },
+  "expected": {
+    "driftStatus": "new",
+    "implications": [
+      {
+        "text": "The greeting must include a time-of-day salutation.",
+        "category": "behaviour"
+      }
+    ],
+    "testDeltaTopics": ["greeting", "salutation"]
+  }
+}

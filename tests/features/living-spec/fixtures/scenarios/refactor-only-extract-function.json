@@ -1,0 +1,29 @@
+{
+  "id": "refactor-only-extract-function",
+  "title": "Extract a helper without changing behaviour (false-alert probe)",
+  "category": "refactor",
+  "isRefactor": true,
+  "diff": {
+    "files": [
+      {
+        "path": "src/discount.js",
+        "before": "export function applyDiscount(total, rate) {\n  if (rate < 0 || rate > 1) throw new Error('bad rate');\n  return total - total * rate;\n}\n",
+        "after": "function assertRate(rate) {\n  if (rate < 0 || rate > 1) throw new Error('bad rate');\n}\nexport function applyDiscount(total, rate) {\n  assertRate(rate);\n  return total - total * rate;\n}\n"
+      }
+    ]
+  },
+  "urs": {
+    "sections": [
+      {
+        "id": "req-discount",
+        "title": "Discount bounds",
+        "text": "Discount rates outside 0..1 must be rejected."
+      }
+    ]
+  },
+  "expected": {
+    "driftStatus": "no-semantic-change",
+    "implications": [],
+    "testDeltaTopics": []
+  }
+}

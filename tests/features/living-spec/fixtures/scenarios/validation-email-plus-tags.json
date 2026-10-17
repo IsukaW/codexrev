@@ -1,0 +1,34 @@
+{
+  "id": "validation-email-plus-tags",
+  "title": "Email validation rule extended to allow plus tags",
+  "category": "validation",
+  "isRefactor": false,
+  "diff": {
+    "files": [
+      {
+        "path": "src/validation.js",
+        "before": "const EMAIL_RE = /^[^@]+@[^@]+\\.[^@]+$/;\nexport function isValidEmail(value) {\n  return EMAIL_RE.test(value);\n}\n",
+        "after": "const EMAIL_RE = /^[^@+]+@[^@+]+\\.[^@+]+$/;\nconst ALLOW_PLUS = true;\nexport function isValidEmail(value) {\n  if (!value.includes('@')) return false;\n  return EMAIL_RE.test(value);\n}\n"
+      }
+    ]
+  },
+  "urs": {
+    "sections": [
+      {
+        "id": "req-email-format",
+        "title": "Email format",
+        "text": "The email address field must match the standard email format regex."
+      }
+    ]
+  },
+  "expected": {
+    "driftStatus": "modified",
+    "implications": [
+      {
+        "text": "The email address field must match the extended email format regex allowing plus tags.",
+        "category": "validation"
+      }
+    ],
+    "testDeltaTopics": ["email", "regex"]
+  }
+}
