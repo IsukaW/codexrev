@@ -21,7 +21,13 @@ import path from 'node:path';
 import { Ajv, type ValidateFunction } from 'ajv';
 import addFormatsDefault from 'ajv-formats';
 import type { FormatsPlugin } from 'ajv-formats';
-import type { SpecProposal, SpecUrsState, SpecUrsVersion } from '../pipeline/types.js';
+import { DEFAULT_DEBOUNCE_MS } from '../pipeline/changeBuffer.js';
+import type {
+  SpecAnalysisResult,
+  SpecProposal,
+  SpecUrsState,
+  SpecUrsVersion,
+} from '../pipeline/types.js';
 import {
   LivingSpecConfigError,
   LivingSpecProposalError,
@@ -36,8 +42,8 @@ const addFormats: FormatsPlugin =
 export const LIVING_SPEC_DIRNAME = 'living-spec';
 export const LIVING_SPEC_SUBDIRS = ['urs', 'versions', 'proposals', 'reports'] as const;
 
-/** Matches `codexrev spec watch --debounce`'s default. */
-export const DEFAULT_DEBOUNCE_MS = 800;
+/** Re-exported so config consumers keep one source of truth (pipeline module). */
+export { DEFAULT_DEBOUNCE_MS };
 export const DEFAULT_WATCHED_PATHS: readonly string[] = ['**/*'];
 
 /** Feature config persisted at `.codexrev/living-spec/config.json`. */
@@ -47,6 +53,15 @@ export interface LivingSpecConfig {
   readonly watchedPaths: readonly string[];
   /** Quiet period after a change batch before analysing it (ms). */
   readonly debounceMs: number;
+  /**
+   * Glob filter for analysed diff files (default: source files only — see
+   * `DEFAULT_SOURCE_GLOBS` in the diff extractor).
+   */
+  readonly includePaths?: readonly string[];
+  /** Context lines kept around each change in the minimal diff view. */
+  readonly contextLines?: number;
+  /** Diff truncation guard in bytes (default: 200 KB). */
+  readonly maxBytes?: number;
   /** Optional model override (`<provider>/<model>`); falls back to settings. */
   readonly modelOverride?: string;
   readonly createdAt: string;
@@ -65,6 +80,13 @@ export const LIVING_SPEC_CONFIG_SCHEMA = {
       items: { type: 'string', minLength: 1 },
     },
     debounceMs: { type: 'integer', minimum: 0, maximum: 60_000 },
+    includePaths: {
+      type: 'array',
+      minItems: 1,
+      items: { type: 'string', minLength: 1 },
+    },
+    contextLines: { type: 'integer', minimum: 0, maximum: 100 },
+    maxBytes: { type: 'integer', minimum: 1024, maximum: 104_857_600 },
     modelOverride: { type: 'string', minLength: 1 },
     createdAt: { type: 'string', format: 'date-time' },
     updatedAt: { type: 'string', format: 'date-time' },
@@ -135,7 +157,7 @@ export function ursStatePath(projectRoot: string): string {
 
 const SAFE_ID = /^[A-Za-z0-9._-]+$/;
 
-function requireSafeId(id: string, kind: 'proposal' | 'version'): string {
+function requireSafeId(id: string, kind: 'proposal' | 'version' | 'report'): string {
   if (!SAFE_ID.test(id) || id === '.' || id === '..') {
     throw new LivingSpecProposalError(`unsafe ${kind} id: ${JSON.stringify(id)}`);
   }
@@ -278,4 +300,21 @@ export async function saveVersion(projectRoot: string, version: SpecUrsVersion):
     JSON.stringify(version, null, 2),
     'utf-8',
   );
+}
+
+// ── Reports ────────────────────────────────────────────────────────────
+
+export function reportPath(projectRoot: string, changeId: string): string {
+  return path.join(reportsDir(projectRoot), `${requireSafeId(changeId, 'report')}.json`);
+}
+
+/** Writes `reports/<changeId>.json`; returns the absolute report path. */
+export async function saveReport(
+  projectRoot: string,
+  result: SpecAnalysisResult,
+): Promise<string> {
+  const file = reportPath(projectRoot, result.changeId);
+  await fs.mkdir(reportsDir(projectRoot), { recursive: true });
+  await fs.writeFile(file, JSON.stringify(result, null, 2), 'utf-8');
+  return file;
 }

@@ -1,11 +1,15 @@
 /**
- * `spec` command dispatch. `analyze` / `watch` are Feature 1 scaffolds —
- * they acknowledge their flags and exit 0. `status`, `history` and
- * `accept` / `reject` / `defer` already work against the state store, so
- * the state layout can be exercised end-to-end before the analyzer lands.
+ * `spec` command dispatch. `analyze` is the deterministic front half of the
+ * pipeline end-to-end (diff extraction + buffering → report JSON), `watch`
+ * is the foreground session over the same path. `status`, `history` and
+ * `accept` / `reject` / `defer` work against the state store.
+ *
+ * Analysis is triggered ONLY by these explicit commands — there is no
+ * auto file-save daemon, service or git hook.
  */
 
 import path from 'node:path';
+import { runDeterministicAnalysis } from '../pipeline/analysisRunner.js';
 import type { SpecProposal, SpecProposalStatus } from '../pipeline/types.js';
 import { LivingSpecError, LivingSpecProposalError } from '../tools/errors.js';
 import {
@@ -18,7 +22,14 @@ import {
   readProposal,
   readUrsState,
   saveProposal,
+  saveReport,
 } from '../tools/stateStore.js';
+import {
+  printAnalysisJson,
+  printAnalysisSummary,
+  printTruncationWarning,
+} from './specOutput.js';
+import { runWatchSession } from './runWatchSession.js';
 
 export interface SpecCommandFlags {
   diff?: string;
@@ -63,19 +74,52 @@ function resolveProject(flags: SpecCommandFlags): string {
 }
 
 async function analyzeCommand(flags: SpecCommandFlags): Promise<void> {
-  console.log('[codexrev spec] analyze is not implemented yet (Feature 1 scaffold).');
-  console.log(
-    `[codexrev spec] planned input: project=${resolveProject(flags)} diff=${flags.diff ?? 'staged'} output=${flags.output ?? 'text'}${flags.dryRun ? ' dry-run' : ''}`,
-  );
-  return Promise.resolve();
+  try {
+    const root = resolveProject(flags);
+    await ensureStateDir(root);
+    const cfg = await readConfig(root);
+    // yargs defaults --diff to the sentinel 'staged'; extraction reads the
+    // index (git diff --cached) when no ref is requested.
+    const ref = flags.diff && flags.diff !== 'staged' ? flags.diff : undefined;
+
+    const outcome = await runDeterministicAnalysis(root, {
+      ref,
+      includePaths: cfg.includePaths,
+      contextLines: cfg.contextLines,
+      maxBytes: cfg.maxBytes,
+    });
+
+    const reportFile = flags.dryRun ? null : await saveReport(root, outcome.result);
+    if ((flags.output ?? 'text') === 'json') {
+      if (outcome.extraction.truncated) printTruncationWarning(outcome.extraction);
+      printAnalysisJson(outcome.result);
+    } else {
+      printAnalysisSummary(outcome, { root, reportFile });
+    }
+  } catch (err) {
+    handleExpectedError(err);
+  }
 }
 
 async function watchCommand(flags: SpecCommandFlags): Promise<void> {
-  console.log('[codexrev spec] watch is not implemented yet (Feature 1 scaffold).');
-  console.log(
-    `[codexrev spec] planned input: project=${resolveProject(flags)} debounce=${flags.debounce ?? 800}ms paths=${flags.paths ?? '(config.json)'}${flags.dryRun ? ' dry-run' : ''}`,
-  );
-  return Promise.resolve();
+  try {
+    const root = resolveProject(flags);
+    await ensureStateDir(root);
+    const watchedPaths = flags.paths
+      ? flags.paths
+          .split(',')
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0)
+      : undefined;
+    await runWatchSession({
+      projectRoot: root,
+      debounceMs: flags.debounce,
+      watchedPaths,
+      dryRun: flags.dryRun,
+    });
+  } catch (err) {
+    handleExpectedError(err);
+  }
 }
 
 async function statusCommand(flags: SpecCommandFlags): Promise<void> {

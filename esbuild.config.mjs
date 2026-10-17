@@ -50,6 +50,7 @@ const externals = [
   'simple-git',
   'ajv',
   'ajv-formats',
+  'chokidar',
   'diff',
   'dotenv',
   'glob',

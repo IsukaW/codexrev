@@ -38,3 +38,19 @@ export class LivingSpecProposalError extends LivingSpecError {
     this.name = 'LivingSpecProposalError';
   }
 }
+
+/** Diff extraction failed (not a git repo, git diff failure, unusable patch). */
+export class LivingSpecDiffError extends LivingSpecError {
+  constructor(message: string) {
+    super(message, 'CODEXREV_LIVING_SPEC_DIFF');
+    this.name = 'LivingSpecDiffError';
+  }
+}
+
+/** The watch session could not start or its watcher provider failed. */
+export class LivingSpecWatchError extends LivingSpecError {
+  constructor(message: string) {
+    super(message, 'CODEXREV_LIVING_SPEC_WATCH');
+    this.name = 'LivingSpecWatchError';
+  }
+}
