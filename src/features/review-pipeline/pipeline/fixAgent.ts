@@ -8,6 +8,7 @@
 // exact same edits onto the real project through the shared edit/write_file tools once
 // the user has confirmed them.
 
+import { LOCKFILE } from '../../../core/toolchains/index.js';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { builtinTools } from '../../../tools/builtin.js';
@@ -23,7 +24,7 @@ const DIFF_CONTEXT_CHARS = 40_000;
 const READ_TOOLS = ['read_file', 'glob', 'grep'] as const;
 const WRITE_TOOLS = ['edit', 'write_file'] as const;
 const FORBIDDEN_SEGMENTS: ReadonlySet<string> = new Set(['node_modules', '.git', '.codexrev']);
-const FORBIDDEN_FILES = /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|Cargo\.lock|go\.sum|poetry\.lock)$/;
+const FORBIDDEN_FILES = LOCKFILE;
 
 export interface FixTaskFinding {
   readonly role: RoleId;
@@ -89,7 +90,7 @@ You have read tools (read_file, glob, grep), write tools (edit, write_file) and,
    - errors: every new failure path is surfaced to the caller/user, nothing is swallowed, the original error is kept;
    - input kept or cleared at the right moment (e.g. only after success), boundaries (0, empty, max, max+1) behave as intended;
    - tests: new or changed behavior has a test in the project's existing framework and style that would fail without your fix and asserts real values, not just "does not throw". Never add production code whose only purpose is to make a test possible (reset hooks, test-only exports or flags); use the project's own seams, fake timers or dependency injection instead.
-6. Never: add dependencies; edit lockfiles or build/tooling config; delete or weaken existing tests or assertions; silence problems with \`any\`/\`as\` casts, \`@ts-ignore\`, empty catch blocks, or by removing the check that found the problem.
+6. Never: add dependencies; edit lockfiles or build/tooling config (package.json scripts, pom.xml, build.gradle, tsconfig, CI files); delete or weaken existing tests or assertions; silence problems with type escapes (\`any\`, unchecked \`as\` casts, raw types), suppressions (\`@ts-ignore\`, \`@SuppressWarnings\`, \`# type: ignore\`, \`//nolint\`, \`#[allow(...)]\`), empty catch/except blocks, or by removing the check that found the problem.
 7. \`edit\` needs old_string to match the file exactly once — include enough surrounding lines to be unique. Paths are relative to the project root.
 8. If run_checks is available, call it after your edits. If it reports new build errors or failing tests, fix them and call it again. Finish only when it reports OK (or you have explained why it cannot).
 9. If a finding is wrong (the code is already correct) or cannot be fixed safely without a product decision, leave it and say why instead of guessing.

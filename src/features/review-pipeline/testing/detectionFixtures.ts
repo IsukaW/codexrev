@@ -23,6 +23,8 @@ export interface DetectionFixture {
   readonly content: string;
   readonly expectRole: RoleId | null; // which role should flag it, or null for a clean baseline
   readonly urs?: string; // handed to the BA role, for fixtures that are only wrong relative to a requirement
+  /** omitted = TypeScript; lets the evaluation report detection per language (--lang) */
+  readonly language?: 'typescript' | 'java';
 }
 
 // A made-up, non-working key shaped like a live payment-provider key so the model sees a realistic
@@ -184,6 +186,257 @@ export async function readConfig(path: string): Promise<Record<string, unknown>>
     expectRole: null,
   },
 ];
+
+// The same defect categories in Java / Spring Boot, so the evaluation shows whether detection holds
+// outside the TypeScript the pipeline was first built for. Plain files, no pom.xml: the Build role then
+// checks them with the javac fallback, which treats the Spring imports as libraries that are not
+// available here rather than as compile errors — so a fixture never needs a Spring download to run,
+// and a clean baseline is never failed by the environment.
+export const JAVA_DETECTION_FIXTURES: readonly DetectionFixture[] = [
+  {
+    name: '[Java] Cross-boundary DB access (REST controller running SQL itself)',
+    file: 'src/main/java/com/shop/web/OrderController.java',
+    content: `package com.shop.web;
+
+import java.util.List;
+import java.util.Map;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+public class OrderController {
+    private final JdbcTemplate jdbc;
+
+    public OrderController(JdbcTemplate jdbc) {
+        this.jdbc = jdbc;
+    }
+
+    // the web layer queries the database directly, bypassing the service and repository layers
+    @GetMapping("/customers/{id}/orders")
+    public List<Map<String, Object>> orders(@PathVariable long id) {
+        return jdbc.queryForList("SELECT * FROM orders WHERE customer_id = ?", id);
+    }
+}
+`,
+    expectRole: 'architect',
+    language: 'java',
+  },
+  {
+    name: '[Java] Unreleased resource (JDBC connection never closed)',
+    file: 'src/main/java/com/shop/report/ReportExporter.java',
+    content: `package com.shop.report;
+
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
+import javax.sql.DataSource;
+
+public class ReportExporter {
+    private final DataSource dataSource;
+
+    public ReportExporter(DataSource dataSource) {
+        this.dataSource = dataSource;
+    }
+
+    public List<String> titles(long reportId) throws SQLException {
+        Connection connection = dataSource.getConnection();
+        PreparedStatement statement = connection.prepareStatement("SELECT title FROM reports WHERE id = ?");
+        statement.setLong(1, reportId);
+        ResultSet rows = statement.executeQuery();
+        List<String> titles = new ArrayList<>();
+        while (rows.next()) {
+            titles.add(rows.getString("title"));
+        }
+        // connection, statement and result set are never closed, on any path
+        return titles;
+    }
+}
+`,
+    expectRole: 'architect',
+    language: 'java',
+  },
+  {
+    name: '[Java] Off-by-one (inclusive bound past the end of the list)',
+    file: 'src/main/java/com/shop/util/Totals.java',
+    content: `package com.shop.util;
+
+import java.util.List;
+
+public final class Totals {
+    private Totals() {}
+
+    public static int sumFirst(List<Integer> values, int n) {
+        int total = 0;
+        for (int i = 0; i <= n; i++) {
+            total += values.get(i);
+        }
+        return total;
+    }
+}
+`,
+    expectRole: 'qa',
+    language: 'java',
+  },
+  {
+    name: '[Java] Clean baseline (no injected issue)',
+    file: 'src/main/java/com/shop/util/Ranges.java',
+    content: `package com.shop.util;
+
+public final class Ranges {
+    private Ranges() {}
+
+    public static int clamp(int value, int min, int max) {
+        if (min > max) {
+            throw new IllegalArgumentException("min must not be greater than max");
+        }
+        return Math.max(min, Math.min(max, value));
+    }
+}
+`,
+    expectRole: null,
+    language: 'java',
+  },
+  {
+    name: '[Java] Swallowed exception (failed write reported as success)',
+    file: 'src/main/java/com/shop/settings/SettingsStore.java',
+    content: `package com.shop.settings;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
+public class SettingsStore {
+    public boolean save(Path file, String json) {
+        try {
+            Files.writeString(file, json, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            // ignore
+        }
+        return true; // reports success even when the write failed
+    }
+}
+`,
+    expectRole: 'dev',
+    language: 'java',
+  },
+  {
+    name: '[Java] String compared with == (identity, not content)',
+    file: 'src/main/java/com/shop/account/AccountService.java',
+    content: `package com.shop.account;
+
+public class AccountService {
+    public boolean canLogIn(Account account) {
+        // compares references: false for a status read from the database or a request, even when it says ACTIVE
+        return account.getStatus() == "ACTIVE";
+    }
+
+    public interface Account {
+        String getStatus();
+    }
+}
+`,
+    expectRole: 'dev',
+    language: 'java',
+  },
+  {
+    name: '[Java] Spec mismatch (URS caps discounts at 20%, code allows 50%; plus unrequested behavior)',
+    file: 'src/main/java/com/shop/pricing/DiscountPolicy.java',
+    content: `package com.shop.pricing;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+
+public class DiscountPolicy {
+    public static final int MAX_DISCOUNT_PERCENT = 50;
+
+    public BigDecimal apply(BigDecimal price, int percent) {
+        int capped = Math.min(percent, MAX_DISCOUNT_PERCENT);
+        BigDecimal factor = BigDecimal.valueOf(100 - capped).divide(BigDecimal.valueOf(100), 4, RoundingMode.HALF_UP);
+        return price.multiply(factor).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    // not in the requirements: every discounted order is also logged with the customer's e-mail
+    public void audit(String customerEmail, int percent) {
+        System.out.println("discount " + percent + "% for " + customerEmail);
+    }
+}
+`,
+    urs: `REQ-1: A discount may never exceed 20% of the item price.
+REQ-2: Customer e-mail addresses must not be written to logs.`,
+    expectRole: 'ba',
+    language: 'java',
+  },
+  {
+    name: '[Java] Untested risky change (JUnit test that asserts nothing)',
+    file: 'src/test/java/com/shop/payment/RefundServiceTest.java',
+    content: `package com.shop.payment;
+
+import org.junit.jupiter.api.Test;
+
+class RefundServiceTest {
+    @Test
+    void refundWorks() {
+        RefundService service = new RefundService();
+        service.refund(100, 0);
+        service.refund(-5, 3);
+    }
+}
+`,
+    expectRole: 'qa',
+    language: 'java',
+  },
+  {
+    name: '[Java] Clean baseline #2 (try-with-resources, errors propagated)',
+    file: 'src/main/java/com/shop/config/ConfigReader.java',
+    content: `package com.shop.config;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+public final class ConfigReader {
+    private ConfigReader() {}
+
+    /** Reads key=value lines; blank lines and # comments are skipped. */
+    public static Map<String, String> read(Path file) throws IOException {
+        Map<String, String> values = new LinkedHashMap<>();
+        try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+            String line;
+            int lineNumber = 0;
+            while ((line = reader.readLine()) != null) {
+                lineNumber++;
+                String trimmed = line.trim();
+                if (trimmed.isEmpty() || trimmed.startsWith("#")) {
+                    continue;
+                }
+                int eq = trimmed.indexOf('=');
+                if (eq <= 0) {
+                    throw new IOException(file + ":" + lineNumber + ": expected key=value");
+                }
+                values.put(trimmed.substring(0, eq).trim(), trimmed.substring(eq + 1).trim());
+            }
+        }
+        return values;
+    }
+}
+`,
+    expectRole: null,
+    language: 'java',
+  },
+];
+
+/** every detection fixture, all languages */
+export const ALL_DETECTION_FIXTURES: readonly DetectionFixture[] = [...DETECTION_FIXTURES, ...JAVA_DETECTION_FIXTURES];
 
 // separate fixture for the breaker-builder convergence measurement — one
 // deterministic-fixable finding (TS7006)

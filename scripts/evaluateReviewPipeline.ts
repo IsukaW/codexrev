@@ -29,14 +29,14 @@
  * `docs/review-pipeline-evaluation-results.md`.
  *
  * Usage:
- *   npx tsx scripts/evaluateReviewPipeline.ts [--provider <id>] [--model <name>]
+ *   npx tsx scripts/evaluateReviewPipeline.ts [--provider <id>] [--model <name>] [--lang typescript|java] [--only <name>]
  *
  * Defaults to `--provider ollama` (a local daemon needs no API key to
  * try). Pass `--provider openai` etc. with the relevant key configured
  * (`codexrev models add` / env var) to run the same battery against a
  * cloud model instead — the results table records which one ran.
  *
- * Each of this script's four detection fixtures runs the FULL six-role
+ * Each of this script's detection fixtures (TypeScript and Java) runs the FULL six-role
  * pipeline, so total runtime scales with however slow the target model
  * is — expect several minutes per fixture against a local ~12B model on
  * a laptop, which is itself a real (and reportable) latency data point.
@@ -46,7 +46,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import {
   CONVERGENCE_FIXTURE_FILES,
-  DETECTION_FIXTURES,
+  ALL_DETECTION_FIXTURES,
   fixtureLlmProvider,
   makeFixtureRepo,
   runDetectionFixture,
@@ -68,6 +68,11 @@ function argValue(flag: string, fallback: string): string {
 
 // --only <substring>: run just the fixtures whose name contains it (case-insensitive), skipping the convergence run — for fast iteration
 const onlyFilter = argValue('--only', '').toLowerCase();
+// --lang typescript|java: run one language's fixtures only (default: all of them)
+const langFilter = argValue('--lang', 'all').toLowerCase();
+if (!['all', 'typescript', 'java'].includes(langFilter)) throw new Error(`--lang must be typescript, java or all (got "${langFilter}")`);
+const languageOf = (f: { language?: string }): string => f.language ?? 'typescript';
+const FIXTURES = ALL_DETECTION_FIXTURES.filter((f) => langFilter === 'all' || languageOf(f) === langFilter);
 const providerId = argValue('--provider', 'ollama') as ProviderId;
 const modelName = argValue('--model', providerId === 'ollama' ? 'gemma4:12b-mlx' : DEFAULT_SETTINGS.model);
 
@@ -128,7 +133,7 @@ function fmtMs(ms: number): string {
 }
 
 interface FixtureRunOutcome {
-  readonly fixture: (typeof DETECTION_FIXTURES)[number];
+  readonly fixture: (typeof ALL_DETECTION_FIXTURES)[number];
   readonly result?: DetectionResult;
   readonly error?: string;
 }
@@ -144,7 +149,7 @@ async function main(): Promise<void> {
   // was the actual bug this rewrite fixes: an incomplete/errored
   // pipeline run used to read back as "all roles passed").
   const outcomes: FixtureRunOutcome[] = [];
-  const selected = onlyFilter ? DETECTION_FIXTURES.filter((f) => f.name.toLowerCase().includes(onlyFilter)) : DETECTION_FIXTURES;
+  const selected = onlyFilter ? FIXTURES.filter((f) => f.name.toLowerCase().includes(onlyFilter)) : FIXTURES;
   if (onlyFilter && selected.length === 0) throw new Error(`--only "${onlyFilter}" matched no fixture`);
   for (const fixture of selected) {
     console.log(`Running: ${fixture.name}...`);
@@ -199,7 +204,7 @@ async function main(): Promise<void> {
   if (erroredFixtures.length > 0 || convergenceError) {
     lines.push('');
     lines.push(
-      `**${erroredFixtures.length + (convergenceError ? 1 : 0)} of ${DETECTION_FIXTURES.length + 1} runs errored** (see "Errored runs" below) and are excluded from every metric — a crashed run is never counted as a pass.`,
+      `**${erroredFixtures.length + (convergenceError ? 1 : 0)} of ${FIXTURES.length + 1} runs errored** (see "Errored runs" below) and are excluded from every metric — a crashed run is never counted as a pass.`,
     );
   }
   lines.push('');
@@ -207,6 +212,19 @@ async function main(): Promise<void> {
   lines.push('|---|---|');
   lines.push(`| Detection accuracy | ${truePositives}/${vulnCases.length} (${isNaN(accuracy) ? 'n/a' : `${(accuracy * 100).toFixed(0)}%`}) |`);
   lines.push(`| Detection by the *expected* role | ${caughtByExpected}/${vulnCases.length} (${isNaN(strictAccuracy) ? 'n/a' : `${(strictAccuracy * 100).toFixed(0)}%`}) |`);
+  // the same categories exist in every language, so per-language rows show whether detection carries over
+  const languages = [...new Set(detectionResults.map((r) => languageOf(r.fixture)))];
+  if (languages.length > 1) {
+    for (const lang of languages) {
+      const vuln = vulnCases.filter((r) => languageOf(r.fixture) === lang);
+      const clean = cleanCases.filter((r) => languageOf(r.fixture) === lang);
+      const pct = (n: number, d: number): string => (d > 0 ? `${((n / d) * 100).toFixed(0)}%` : 'n/a');
+      const caught = vuln.filter((r) => r.flagged).length;
+      const expected = vuln.filter((r) => r.caughtByExpected).length;
+      const fp = clean.filter((r) => r.decision !== 'approve').length;
+      lines.push(`| — ${lang}: detected / by expected role / false positives | ${caught}/${vuln.length} (${pct(caught, vuln.length)}) · ${expected}/${vuln.length} (${pct(expected, vuln.length)}) · ${fp}/${clean.length} |`);
+    }
+  }
   lines.push(`| Clean cases with any role flag (noise, not a failed review) | ${noisyClean}/${cleanCases.length} |`);
   lines.push(`| False-positive rate | ${falsePositives}/${cleanCases.length} (${isNaN(falsePositiveRate) ? 'n/a' : `${(falsePositiveRate * 100).toFixed(0)}%`}) |`);
   lines.push(`| Avg. latency per full six-role scan | ${isNaN(avgLatencyMs) ? 'n/a' : fmtMs(avgLatencyMs)} (target: ≤5 min) |`);
@@ -238,7 +256,7 @@ async function main(): Promise<void> {
   lines.push('');
   lines.push('## Not covered by this run');
   lines.push('');
-  lines.push("- **Full Juliet Test Suite / NIST SARD benchmark** — not bundled with this repo; this script's 4 hand-written fixtures are a small illustrative sample, not that corpus.");
+  lines.push(`- **Full Juliet Test Suite / NIST SARD benchmark** — not bundled with this repo; this script's ${FIXTURES.length} hand-written fixtures are a small illustrative sample, not that corpus.`);
   lines.push('- **Local-vs-cloud comparison** — re-run this script with `--provider openai` (or another configured cloud provider) and diff the two results tables.');
 
   const outPath = path.join(process.cwd(), 'docs', 'review-pipeline-evaluation-results.md');

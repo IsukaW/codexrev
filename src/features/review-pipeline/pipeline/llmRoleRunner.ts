@@ -15,6 +15,7 @@
 //
 // Kept in one place instead of copy-pasted across roles/ba.ts, dev.ts, etc.
 
+import { LOCKFILE } from '../../../core/toolchains/index.js';
 import {
   ROLE_LABELS,
   ROLE_ORDER,
@@ -62,7 +63,7 @@ function roleToolDeclarations(): readonly ToolDeclaration[] {
 // findings, tool results and the answer inside a typical context window
 export const DIFF_PROMPT_CHAR_BUDGET = 60_000;
 const MAX_LINE_CHARS = 400; // a minified bundle or lockfile line would otherwise eat the whole budget alone
-const LOW_VALUE_FILE = /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|Cargo\.lock|go\.sum|poetry\.lock)$|\.min\.(js|css)$|\.map$/;
+const isLowValueFile = (file: string): boolean => LOCKFILE.test(file) || /\.min\.(js|css)$|\.map$/.test(file);
 
 // files are rendered in diff order until the budget runs out — the rest are
 // listed by name (not silently dropped) so roles can read_file them on demand
@@ -71,7 +72,7 @@ export function formatDiffForPrompt(diff: ParsedDiff, maxChars: number = DIFF_PR
   if (diff.files.length === 0) return '(no changes)';
 
   // lockfiles/minified output last, so they are the first to be cut when the diff is too big
-  const ordered = [...diff.files].sort((x, y) => Number(LOW_VALUE_FILE.test(x.path)) - Number(LOW_VALUE_FILE.test(y.path)));
+  const ordered = [...diff.files].sort((x, y) => Number(isLowValueFile(x.path)) - Number(isLowValueFile(y.path)));
 
   const parts: string[] = [];
   const omitted: string[] = [];
@@ -388,8 +389,9 @@ export async function runLlmRole(
 
   // the part every review of this code shares; the fix-verification note below is appended after it
   // so the cache key (built from this part only) is the same whether or not the loop was involved
+  const project = ctx.projectSummary ? `## Project\n\n${ctx.projectSummary} — apply this stack's own conventions and pitfalls.\n\n` : '';
   const basePrompt = `
-## Diff under review (ref: ${ctx.diff.ref})
+${project}## Diff under review (ref: ${ctx.diff.ref})
 
 ${formatDiffForPrompt(ctx.diff)}
 

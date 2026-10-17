@@ -79,6 +79,7 @@ import type { PrewarmedFix } from './fixPrewarm.js';
 import { fingerprintTree, type RoleCache } from './reviewCache.js';
 import type { VerificationContext } from './roleRunContext.js';
 import { builtinTools } from '../../../tools/builtin.js';
+import { TEST_FILE, type ToolchainOptions } from '../../../core/toolchains/index.js';
 import type { ContextAggregator } from './contextAggregator.js';
 import type { ILLMProvider } from './illmProvider.js';
 import type { RoleRunContext } from './roleRunContext.js';
@@ -159,6 +160,8 @@ export interface RunBreakerBuilderLoopOptions {
   readonly validationOptions?: ValidationOptions;
   /** progress text for the long-running steps (sandbox setup, test runs, verification) */
   readonly onStatus?: (message: string) => void;
+  /** settings `toolchain` + sandbox permission, for the Build role in every re-review */
+  readonly toolchain?: ToolchainOptions;
 }
 
 export interface FixCandidate {
@@ -294,8 +297,6 @@ async function gateForFixBatch(
 
 // ── sandbox-mode helpers (agent / validate) ─────────────────────────────────
 
-// test files by the conventions of the ecosystems the Build role knows
-const TEST_FILE = /(^|\/)(__tests__|tests?|spec)\/|\.(test|spec)\.[cm]?[jt]sx?$|_test\.(go|py)$|(^|\/)test_[^/]+\.py$|(^|\/)tests?\.rs$/i;
 
 export function isTestFile(file: string): boolean {
   return TEST_FILE.test(file.replace(/\\/g, '/'));
@@ -381,7 +382,8 @@ export async function restoreDeletedFiles(
 }
 
 // vitest/jest/pytest wording for "there was nothing to run" — the usual reason a suite fails right after its files were deleted
-const NO_TESTS_FOUND = /no test(s| files)? (were )?(found|ran|collected|to run)|no tests? suites? found/i;
+// (vitest, jest, pytest, Maven surefire, Gradle)
+const NO_TESTS_FOUND = /no test(s| files)? (were )?(found|ran|collected|to run|executed)|no tests? suites? found|no tests found for given includes/i;
 
 async function fileExistsAt(p: string): Promise<boolean> {
   try {
@@ -592,6 +594,7 @@ export async function runBreakerBuilderLoop(opts: RunBreakerBuilderLoopOptions):
         cwd: opts.cwd,
         verification: verification(),
         cache: opts.cache,
+        toolchain: opts.toolchain,
         onRoleComplete: (output) => opts.onRoleRerun?.(output),
       }),
     );
@@ -1050,6 +1053,7 @@ export async function runBreakerBuilderLoop(opts: RunBreakerBuilderLoopOptions):
           aggregator: opts.aggregator,
           cwd: opts.cwd,
           verification: verification(),
+          toolchain: opts.toolchain,
         };
         const output = await timed('re-review (blocking roles)', () => ROLE_RUNNERS[role](ctx));
         opts.aggregator.replaceRoleOutput(output);

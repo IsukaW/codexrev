@@ -118,12 +118,15 @@ export async function runReviewSession(opts: ReviewSessionOptions): Promise<Revi
   };
 
   const robust = (opts.fixStrategy ?? settings.reviewPipeline.fixStrategy ?? 'robust') === 'robust';
+  // the user's build/test commands (if any) and whether the OS sandbox may wrap the toolchain
+  const toolchain = { ...settings.toolchain, sandbox: settings.sandbox !== 'off' };
+  const validationOptions = { testTimeoutMs: settings.reviewPipeline.fixTestTimeoutMs, toolchain };
   // identical question + identical code = reuse the earlier answer (see reviewCache.ts); library callers get none
   const cache = opts.noCache || opts.llmOverride ? undefined : createRoleCache(opts.cwd);
   // with --fix, get the temporary copy and its build/test baseline ready while the scan is still running
   const prewarmed =
     opts.fix && robust && !opts.llmOverride
-      ? prewarmFixEnvironment(opts.cwd, diff, true, { testTimeoutMs: settings.reviewPipeline.fixTestTimeoutMs })
+      ? prewarmFixEnvironment(opts.cwd, diff, true, validationOptions)
       : undefined;
   const discardPrewarmed = async (): Promise<void> => {
     const pre = await prewarmed;
@@ -162,6 +165,7 @@ export async function runReviewSession(opts: ReviewSessionOptions): Promise<Revi
       llm,
       model,
       cwd: opts.cwd,
+      toolchain,
       // the six roles run straight through by default; the Continue/Details/Skip/Abort gate after each
       // role is opt-in (--step). The --fix batch approval below always uses `interaction`.
       interaction: opts.step ? interaction : undefined,
@@ -212,7 +216,8 @@ export async function runReviewSession(opts: ReviewSessionOptions): Promise<Revi
           fixAdvisory: robust,
           temporaryTests: robust && !settings.reviewPipeline.fixKeepNewTests,
           validate: robust,
-          validationOptions: { testTimeoutMs: settings.reviewPipeline.fixTestTimeoutMs },
+          validationOptions,
+          toolchain,
           onStatus: interactive ? (message) => events!.emit({ type: 'fix_status', message }) : (message) => console.log(`… ${message}`),
           interaction,
           onIterationStart: interactive

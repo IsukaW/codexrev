@@ -14,7 +14,7 @@ import path from 'node:path';
 import stripJsonComments from 'strip-json-comments';
 import {
   DEFAULT_SETTINGS,
-  validateReviewPipelineSettings,
+  validateReviewPipelineSettings, validateToolchainSettings,
   type Settings,
   type McpServerEntry,
 } from './schema.js';
@@ -190,6 +190,7 @@ export async function loadSettings(cwd: string = process.cwd()): Promise<Setting
   }
   validateMcpServers(merged.mcpServers);
   validateReviewPipelineSettings(merged.reviewPipeline);
+  validateToolchainSettings(merged.toolchain);
 
   return merged;
 }
