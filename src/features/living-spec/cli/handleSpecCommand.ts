@@ -10,8 +10,22 @@
 
 import path from 'node:path';
 import { runDeterministicAnalysis } from '../pipeline/analysisRunner.js';
+import {
+  applyInferenceToResult,
+  buildImplicationsLabel,
+  runImplicationInference,
+  type ImplicationsLabelFile,
+} from '../pipeline/inferenceEngine.js';
+import {
+  createLLMPort,
+  DEFAULT_INFERENCE_TIMEOUT_MS,
+  isNetworkProvider,
+  resolveInferenceTarget,
+  type LLMPort,
+} from '../pipeline/llmPort.js';
+import { formatDiffForPrompt } from '../pipeline/promptBuilder.js';
 import type { SpecProposal, SpecProposalStatus } from '../pipeline/types.js';
-import { LivingSpecError, LivingSpecProposalError } from '../tools/errors.js';
+import { LivingSpecConfigError, LivingSpecError, LivingSpecProposalError } from '../tools/errors.js';
 import {
   ensureStateDir,
   listProposalIds,
@@ -20,7 +34,9 @@ import {
   proposalsDir,
   readConfig,
   readProposal,
+  readUrsExcerpt,
   readUrsState,
+  saveImplicationsReport,
   saveProposal,
   saveReport,
 } from '../tools/stateStore.js';
@@ -38,16 +54,30 @@ export interface SpecCommandFlags {
   dryRun?: boolean;
   debounce?: number;
   paths?: string;
+  /** Inference provider override (default: local). */
+  provider?: string;
+  /** Inference model override. */
+  model?: string;
+  /** Assert no network provider is used for inference. */
+  offline?: boolean;
+  /** Per-request inference timeout (ms). */
+  timeout?: number;
+}
+
+/** Injectable collaborators (tests pass a fake `llm` — never a real network call). */
+export interface SpecCommandDeps {
+  llm?: LLMPort;
 }
 
 export async function handleSpecCommand(
   rest: ReadonlyArray<string | number>,
   flags: SpecCommandFlags,
+  deps?: SpecCommandDeps,
 ): Promise<void> {
   const sub = String(rest[0] ?? '');
   switch (sub) {
     case 'analyze':
-      return analyzeCommand(flags);
+      return analyzeCommand(flags, deps);
     case 'watch':
       return watchCommand(flags);
     case 'status':
@@ -73,7 +103,7 @@ function resolveProject(flags: SpecCommandFlags): string {
   return path.resolve(flags.project ?? process.cwd());
 }
 
-async function analyzeCommand(flags: SpecCommandFlags): Promise<void> {
+async function analyzeCommand(flags: SpecCommandFlags, deps?: SpecCommandDeps): Promise<void> {
   try {
     const root = resolveProject(flags);
     await ensureStateDir(root);
@@ -89,16 +119,99 @@ async function analyzeCommand(flags: SpecCommandFlags): Promise<void> {
       maxBytes: cfg.maxBytes,
     });
 
-    const reportFile = flags.dryRun ? null : await saveReport(root, outcome.result);
+    // Semantic back half: infer requirement implications from the diff. Runs
+    // only when a model source is available (injected llm, --provider/--model,
+    // or config.modelOverride); otherwise the deterministic result stands.
+    let result = outcome.result;
+    let label: ImplicationsLabelFile | null = null;
+
+    if (shouldRunInference(cfg.modelOverride, flags, deps)) {
+      const target = resolveInferenceTarget({
+        provider: flags.provider,
+        model: flags.model,
+        modelOverride: cfg.modelOverride,
+      });
+      if (flags.offline && isNetworkProvider(target.provider)) {
+        throw new LivingSpecConfigError(
+          `--offline forbids the network provider "${target.provider}"; ` +
+            'use a local provider (ollama, lmstudio, litellm).',
+        );
+      }
+      const timeoutMs = flags.timeout ?? DEFAULT_INFERENCE_TIMEOUT_MS;
+      const llm =
+        deps?.llm ?? createLLMPort({ provider: target.provider, model: target.model, timeoutMs });
+      const ursExcerpt = await readUrsExcerpt(root);
+      const inferenceResult = await runImplicationInference(
+        { diff: formatDiffForPrompt(outcome.extraction.files), ...(ursExcerpt ? { ursExcerpt } : {}) },
+        llm,
+        {
+          model: target.model,
+          provider: target.provider,
+          timeoutMs,
+          maxTimeoutRetries: 1,
+        },
+      );
+
+      if (inferenceResult.ok) {
+        result = applyInferenceToResult(outcome.result, inferenceResult);
+      } else {
+        // Failure policy (NFR4/NFR5): leave the prior deterministic result
+        // untouched and surface a structured error instead.
+        result = { ...outcome.result, inferenceError: inferenceResult.error };
+        console.warn(
+          `  ⚠ implication inference failed (${inferenceResult.error.code}): ${inferenceResult.error.message}`,
+        );
+      }
+      label = buildImplicationsLabel({
+        changeId: outcome.changeId,
+        timestamp: outcome.result.timestamp,
+        provider: target.provider,
+        model: target.model,
+        result: inferenceResult,
+      });
+    }
+
+    const reportFile = flags.dryRun ? null : await saveReport(root, result);
+    const labelFile =
+      flags.dryRun || !label ? null : await saveImplicationsReport(root, outcome.changeId, label);
+
     if ((flags.output ?? 'text') === 'json') {
       if (outcome.extraction.truncated) printTruncationWarning(outcome.extraction);
-      printAnalysisJson(outcome.result);
+      printAnalysisJson(result);
     } else {
       printAnalysisSummary(outcome, { root, reportFile });
+      if (label) {
+        console.log(
+          `  implications:    ${result.implications.length} (model ${label.model}, ${
+            label.ok ? 'ok' : `failed: ${label.error?.code ?? 'error'}`
+          })`,
+        );
+        if (result.behaviourChangeSummary) {
+          console.log(`  behaviour:       ${result.behaviourChangeSummary}`);
+        }
+        if (result.requiresUrsUpdate !== undefined) {
+          console.log(`  URS update:      ${result.requiresUrsUpdate ? 'required' : 'not required'}`);
+        }
+        if (labelFile) console.log(`  labelled output: ${labelFile}`);
+      }
     }
   } catch (err) {
     handleExpectedError(err);
   }
+}
+
+/** Inference runs when a model source is available (injection or config). */
+function shouldRunInference(
+  modelOverride: string | undefined,
+  flags: SpecCommandFlags,
+  deps?: SpecCommandDeps,
+): boolean {
+  return Boolean(
+    deps?.llm ||
+      flags.provider !== undefined ||
+      flags.model !== undefined ||
+      modelOverride !== undefined,
+  );
 }
 
 async function watchCommand(flags: SpecCommandFlags): Promise<void> {

@@ -308,6 +308,11 @@ async function main(): Promise<void> {
       // yargs converts --debounce/--paths straight through.
       debounce: (argv as Record<string, unknown>).debounce as number | undefined,
       paths: (argv as Record<string, unknown>).paths as string | undefined,
+      // inference overrides (semantic back half of `spec analyze`)
+      provider: (argv as Record<string, unknown>).provider as string | undefined,
+      model: (argv as Record<string, unknown>).model as string | undefined,
+      offline: (argv as Record<string, unknown>).offline as boolean | undefined,
+      timeout: (argv as Record<string, unknown>).timeout as number | undefined,
     });
     return;
   }

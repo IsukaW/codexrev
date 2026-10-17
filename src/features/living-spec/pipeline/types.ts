@@ -24,6 +24,15 @@ export interface SpecChangeFile {
 
 export type SpecImplicationKind = 'functional' | 'nfr';
 
+/** Broad category a requirement implication falls under (optional label). */
+export type SpecImplicationCategory =
+  | 'security'
+  | 'performance'
+  | 'api'
+  | 'validation'
+  | 'behaviour'
+  | 'other';
+
 /** A requirement-level implication derived from the change. */
 export interface SpecImplication {
   readonly id: string;
@@ -34,6 +43,10 @@ export interface SpecImplication {
   readonly confidence: number;
   /** Pointers back into the change (file:line refs, hunk ids, commit ids). */
   readonly sourceRefs: readonly string[];
+  /** Why the change implies this requirement (set by model-backed inference). */
+  readonly rationale?: string;
+  /** Optional category label (set by model-backed inference). */
+  readonly category?: SpecImplicationCategory;
 }
 
 /** How the change relates to the current living URS. */
@@ -75,6 +88,12 @@ export interface SpecAnalysisQuality {
   readonly latencyMs: number;
   /** True when the result validated against the contract schema. */
   readonly schemaValid: boolean;
+  /** Token usage reported by the model, when the provider supplies it. */
+  readonly usage?: {
+    readonly inputTokens?: number;
+    readonly outputTokens?: number;
+    readonly totalTokens?: number;
+  };
 }
 
 /**
@@ -91,6 +110,16 @@ export interface SpecAnalysisResult {
   readonly ursPatch: SpecUrsPatch;
   readonly testDeltas: readonly SpecTestCaseDelta[];
   readonly quality: SpecAnalysisQuality;
+  /** One/two-sentence summary of the observable behaviour change (model runs). */
+  readonly behaviourChangeSummary?: string;
+  /** True when the change means the living URS must be updated (model runs). */
+  readonly requiresUrsUpdate?: boolean;
+  /** Structured inference failure, when the semantic half could not run. */
+  readonly inferenceError?: {
+    readonly code: string;
+    readonly message: string;
+    readonly retryable: boolean;
+  };
 }
 
 export type SpecProposalStatus = 'pending' | 'accepted' | 'rejected' | 'deferred';

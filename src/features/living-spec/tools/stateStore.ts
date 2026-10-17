@@ -22,6 +22,7 @@ import { Ajv, type ValidateFunction } from 'ajv';
 import addFormatsDefault from 'ajv-formats';
 import type { FormatsPlugin } from 'ajv-formats';
 import { DEFAULT_DEBOUNCE_MS } from '../pipeline/changeBuffer.js';
+import type { ImplicationsLabelFile } from '../pipeline/inferenceEngine.js';
 import type {
   SpecAnalysisResult,
   SpecProposal,
@@ -239,6 +240,38 @@ export async function writeUrsState(projectRoot: string, state: SpecUrsState): P
   await fs.writeFile(ursStatePath(projectRoot), JSON.stringify(state, null, 2), 'utf-8');
 }
 
+/**
+ * Reads a bounded excerpt of the living URS markdown under `urs/` for use as
+ * prompt context. Returns `null` when no URS markdown exists yet. Each `.md`
+ * file is included (sorted by name) and the concatenation is truncated to
+ * `maxChars` so a huge URS can't blow up the prompt budget.
+ */
+export async function readUrsExcerpt(
+  projectRoot: string,
+  maxChars: number = 8_000,
+): Promise<string | null> {
+  let names: string[];
+  try {
+    names = await fs.readdir(ursDir(projectRoot));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw err;
+  }
+  const mdFiles = names.filter((n) => n.toLowerCase().endsWith('.md')).sort();
+  const parts: string[] = [];
+  for (const name of mdFiles) {
+    try {
+      const content = await fs.readFile(path.join(ursDir(projectRoot), name), 'utf-8');
+      parts.push(`# ${name}\n${content}`);
+    } catch {
+      // skip unreadable files rather than failing the analysis
+    }
+  }
+  if (parts.length === 0) return null;
+  const joined = parts.join('\n\n');
+  return joined.length > maxChars ? joined.slice(0, maxChars) : joined;
+}
+
 // ── Proposals ──────────────────────────────────────────────────────────
 
 export async function listProposalIds(projectRoot: string): Promise<string[]> {
@@ -316,5 +349,29 @@ export async function saveReport(
   const file = reportPath(projectRoot, result.changeId);
   await fs.mkdir(reportsDir(projectRoot), { recursive: true });
   await fs.writeFile(file, JSON.stringify(result, null, 2), 'utf-8');
+  return file;
+}
+
+/**
+ * Path for the evaluation-friendly labelled implication output that lives next
+ * to the analysis report: `reports/<changeId>.implications.json`.
+ */
+export function implicationsReportPath(projectRoot: string, changeId: string): string {
+  return path.join(reportsDir(projectRoot), `${requireSafeId(changeId, 'report')}.implications.json`);
+}
+
+/**
+ * Writes `reports/<changeId>.implications.json` (the stable, metrics-friendly
+ * labelled output). Returns the absolute path. The file is written whether the
+ * inference succeeded or failed so evaluation can track both outcomes.
+ */
+export async function saveImplicationsReport(
+  projectRoot: string,
+  changeId: string,
+  label: ImplicationsLabelFile,
+): Promise<string> {
+  const file = implicationsReportPath(projectRoot, changeId);
+  await fs.mkdir(reportsDir(projectRoot), { recursive: true });
+  await fs.writeFile(file, JSON.stringify(label, null, 2), 'utf-8');
   return file;
 }
