@@ -10,6 +10,12 @@ import type { Argv } from 'yargs';
 // `codexrev <cmd> --help` before the hand-rolled help screen runs
 export function specCommandBuilder<T>(y: Argv<T>): Argv<T> {
   return y
+    .command('init-urs', 'Seed a starter living URS skeleton if none exists', (yy) =>
+      yy.option('project', {
+        type: 'string',
+        describe: 'Target project root (default: current directory)',
+      }),
+    )
     .command('analyze', 'Analyze a diff and propose living-URS updates (in development)', (yy) =>
       yy
         .option('diff', {

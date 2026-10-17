@@ -10,6 +10,7 @@
 
 import path from 'node:path';
 import { runDeterministicAnalysis } from '../pipeline/analysisRunner.js';
+import { compareDrift } from '../pipeline/driftComparator.js';
 import {
   applyInferenceToResult,
   buildImplicationsLabel,
@@ -24,21 +25,29 @@ import {
   type LLMPort,
 } from '../pipeline/llmPort.js';
 import { formatDiffForPrompt } from '../pipeline/promptBuilder.js';
-import type { SpecProposal, SpecProposalStatus } from '../pipeline/types.js';
+import { seedUrsDocument } from '../pipeline/ursModel.js';
+import { generateProposals, proposalsToUrsPatch, validatePatch } from '../pipeline/ursPatcher.js';
+import { acceptPatch, listVersionSnapshots, recordVersion } from '../pipeline/versionStore.js';
+import type {
+  SpecProposal,
+  SpecProposalStatus,
+  UrsDocument,
+} from '../pipeline/types.js';
 import { LivingSpecConfigError, LivingSpecError, LivingSpecProposalError } from '../tools/errors.js';
 import {
   ensureStateDir,
   listProposalIds,
-  listVersions,
   livingSpecDir,
   proposalsDir,
   readConfig,
   readProposal,
+  readUrsDocument,
   readUrsExcerpt,
   readUrsState,
   saveImplicationsReport,
   saveProposal,
   saveReport,
+  ursMarkdownPath,
 } from '../tools/stateStore.js';
 import {
   printAnalysisJson,
@@ -46,6 +55,8 @@ import {
   printTruncationWarning,
 } from './specOutput.js';
 import { runWatchSession } from './runWatchSession.js';
+
+const EMPTY_URS: UrsDocument = { schemaVersion: 1, title: 'User Requirements Specification', sections: [] };
 
 export interface SpecCommandFlags {
   diff?: string;
@@ -78,6 +89,8 @@ export async function handleSpecCommand(
   switch (sub) {
     case 'analyze':
       return analyzeCommand(flags, deps);
+    case 'init-urs':
+      return initUrsCommand(flags);
     case 'watch':
       return watchCommand(flags);
     case 'status':
@@ -171,6 +184,29 @@ async function analyzeCommand(flags: SpecCommandFlags, deps?: SpecCommandDeps): 
       });
     }
 
+    // Deterministic drift + scoped proposals (Function 2). Runs on whatever
+    // implications the semantic half produced (empty when inference is off) —
+    // so the deterministic path still yields driftStatus 'no-semantic-change'
+    // and zero proposals. Nothing becomes authoritative without accept (NFR4).
+    const ursDoc = (await readUrsDocument(root)) ?? EMPTY_URS;
+    const drift = compareDrift(result.implications, ursDoc);
+    const proposals = generateProposals({
+      implications: result.implications,
+      drift,
+      doc: ursDoc,
+      changeId: outcome.changeId,
+      timestamp: result.timestamp,
+    });
+    if (!flags.dryRun) {
+      for (const p of proposals) await saveProposal(root, p);
+    }
+    result = {
+      ...result,
+      driftStatus: drift.overall,
+      ursPatch: proposalsToUrsPatch(proposals),
+      proposalIds: proposals.map((p) => p.id),
+    };
+
     const reportFile = flags.dryRun ? null : await saveReport(root, result);
     const labelFile =
       flags.dryRun || !label ? null : await saveImplicationsReport(root, outcome.changeId, label);
@@ -194,6 +230,10 @@ async function analyzeCommand(flags: SpecCommandFlags, deps?: SpecCommandDeps): 
         }
         if (labelFile) console.log(`  labelled output: ${labelFile}`);
       }
+      console.log(`  drift:           ${result.driftStatus}`);
+      if (result.proposalIds && result.proposalIds.length > 0) {
+        console.log(`  proposals:       ${result.proposalIds.join(', ')} (pending — accept/reject/defer)`);
+      }
     }
   } catch (err) {
     handleExpectedError(err);
@@ -212,6 +252,29 @@ function shouldRunInference(
       flags.model !== undefined ||
       modelOverride !== undefined,
   );
+}
+
+async function initUrsCommand(flags: SpecCommandFlags): Promise<void> {
+  try {
+    const root = resolveProject(flags);
+    await ensureStateDir(root);
+    const existing = await readUrsDocument(root);
+    if (existing) {
+      console.log(`Living URS already exists at ${ursMarkdownPath(root)} — leaving it untouched.`);
+      return;
+    }
+    const now = new Date().toISOString();
+    const doc = seedUrsDocument();
+    const { version } = await recordVersion(root, {
+      changeId: 'seed',
+      action: 'seed',
+      timestamp: now,
+      doc,
+    });
+    console.log(`Seeded living URS skeleton at ${ursMarkdownPath(root)} (v${version}).`);
+  } catch (err) {
+    handleExpectedError(err);
+  }
 }
 
 async function watchCommand(flags: SpecCommandFlags): Promise<void> {
@@ -241,10 +304,13 @@ async function statusCommand(flags: SpecCommandFlags): Promise<void> {
     await ensureStateDir(root);
     const cfg = await readConfig(root);
     const state = await readUrsState(root);
-    const pending: SpecProposal[] = [];
+    // Deferred proposals stay visible until resolved (human gate).
+    const open: SpecProposal[] = [];
     for (const id of await listProposalIds(root)) {
       const proposal = await readProposal(root, id);
-      if (proposal && proposal.status === 'pending') pending.push(proposal);
+      if (proposal && (proposal.status === 'pending' || proposal.status === 'deferred')) {
+        open.push(proposal);
+      }
     }
     const alerts = state?.lastDriftAlerts ?? [];
 
@@ -257,8 +323,13 @@ async function statusCommand(flags: SpecCommandFlags): Promise<void> {
       `  URS version:       ${state ? `v${state.version} (updated ${state.updatedAt})` : 'none yet'}`,
     );
     console.log(
-      `  pending proposals: ${pending.length > 0 ? pending.map((p) => p.id).join(', ') : '(none)'}`,
+      `  open proposals:    ${open.length > 0 ? '' : '(none)'}`,
     );
+    for (const p of open) {
+      const drift = p.driftStatus ? ` [${p.driftStatus}]` : '';
+      const sections = p.sectionsTouched?.length ? ` → ${p.sectionsTouched.join(', ')}` : '';
+      console.log(`    ${p.id}  ${p.status}${drift}  ${p.title}${sections}`);
+    }
     console.log(`  drift alerts:      ${alerts.length > 0 ? `${alerts.length} (latest last)` : '(none)'}`);
     for (const alert of alerts.slice(-3)) {
       console.log(`    ${alert.at}  ${alert.status}  ${alert.changeId}${alert.message ? ` — ${alert.message}` : ''}`);
@@ -272,14 +343,14 @@ async function historyCommand(flags: SpecCommandFlags): Promise<void> {
   try {
     const root = resolveProject(flags);
     await ensureStateDir(root);
-    const versions = await listVersions(root);
-    if (versions.length === 0) {
+    const snapshots = await listVersionSnapshots(root);
+    if (snapshots.length === 0) {
       console.log('No URS versions recorded yet.');
       return;
     }
     console.log('URS versions:');
-    for (const v of versions) {
-      console.log(`  v${v.version}  change ${v.changeId}  ${v.createdAt}`);
+    for (const v of snapshots) {
+      console.log(`  v${v.version}  ${v.action.padEnd(6)}  change ${v.changeId}  ${v.timestamp}`);
     }
   } catch (err) {
     handleExpectedError(err);
@@ -309,8 +380,33 @@ async function decideCommand(
     }
     const status: SpecProposalStatus =
       decision === 'accept' ? 'accepted' : decision === 'reject' ? 'rejected' : 'deferred';
+
+    if (decision === 'accept') {
+      // NFR4/FR13: the patch is applied ONLY on accept. Reject/defer never
+      // touch the URS. Accepting a scoped patch bumps the URS version and
+      // records an append-only, changeId-traceable snapshot (NFR7).
+      if (proposal.patch) {
+        // Reject malformed patches outright — a corrupt proposal is never applied.
+        const check = validatePatch(proposal.patch);
+        if (!check.ok) {
+          throw new LivingSpecProposalError(
+            `proposal "${id}" has a malformed patch: ${check.errors.join('; ')}`,
+          );
+        }
+        const { version } = await acceptPatch(root, {
+          changeId: proposal.changeId,
+          timestamp: new Date().toISOString(),
+          patch: proposal.patch,
+        });
+        console.log(`✓ proposal ${id} accepted — URS updated to v${version}`);
+      } else {
+        console.log(`✓ proposal ${id} accepted (no patch to apply)`);
+      }
+    } else {
+      console.log(`✓ proposal ${id} ${status}`);
+    }
+
     await saveProposal(root, { ...proposal, status });
-    console.log(`✓ proposal ${id} ${status}`);
   } catch (err) {
     handleExpectedError(err);
   }
@@ -328,6 +424,7 @@ function handleExpectedError(err: unknown): void {
 
 function printSpecUsage(): void {
   console.error('usage: codexrev spec <subcommand> [flags]');
+  console.error('  init-urs [--project <path>]');
   console.error('  analyze [--diff <ref>] [--project <path>] [--output json|text] [--dry-run]');
   console.error('  watch   [--debounce <ms>] [--paths <globs>] [--dry-run]');
   console.error('  status | history');

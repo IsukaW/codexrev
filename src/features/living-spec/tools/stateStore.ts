@@ -23,11 +23,17 @@ import addFormatsDefault from 'ajv-formats';
 import type { FormatsPlugin } from 'ajv-formats';
 import { DEFAULT_DEBOUNCE_MS } from '../pipeline/changeBuffer.js';
 import type { ImplicationsLabelFile } from '../pipeline/inferenceEngine.js';
+import {
+  parseUrsDocument,
+  renderUrsMarkdown,
+  serializeUrsDocument,
+} from '../pipeline/ursModel.js';
 import type {
   SpecAnalysisResult,
   SpecProposal,
   SpecUrsState,
   SpecUrsVersion,
+  UrsDocument,
 } from '../pipeline/types.js';
 import {
   LivingSpecConfigError,
@@ -270,6 +276,66 @@ export async function readUrsExcerpt(
   if (parts.length === 0) return null;
   const joined = parts.join('\n\n');
   return joined.length > maxChars ? joined.slice(0, maxChars) : joined;
+}
+
+// ── Living URS document (urs.md + urs.json) ───────────────────────────
+
+export function ursMarkdownPath(projectRoot: string): string {
+  return path.join(ursDir(projectRoot), 'urs.md');
+}
+
+export function ursJsonPath(projectRoot: string): string {
+  return path.join(ursDir(projectRoot), 'urs.json');
+}
+
+/**
+ * Crash-safe write: content goes to a temp file first, then `rename`s over the
+ * target. A crash before the rename leaves the previous file fully intact
+ * (never a half-written document). `beforeRename` is a test seam used to
+ * simulate a crash between the temp write and the commit.
+ */
+export async function writeFileAtomic(
+  target: string,
+  content: string,
+  opts?: { beforeRename?: () => void | Promise<void> },
+): Promise<void> {
+  const dir = path.dirname(target);
+  await fs.mkdir(dir, { recursive: true });
+  const tmp = path.join(dir, `.${path.basename(target)}.${randomBytes(4).toString('hex')}.tmp`);
+  await fs.writeFile(tmp, content, 'utf-8');
+  if (opts?.beforeRename) await opts.beforeRename();
+  await fs.rename(tmp, target);
+}
+
+/** Reads + parses `urs/urs.json`; returns null when absent. */
+export async function readUrsDocument(projectRoot: string): Promise<UrsDocument | null> {
+  try {
+    const raw = await fs.readFile(ursJsonPath(projectRoot), 'utf-8');
+    return parseUrsDocument(JSON.parse(raw));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw new LivingSpecStateError(
+      `failed to read ${ursJsonPath(projectRoot)}: ${(err as Error).message}`,
+    );
+  }
+}
+
+/**
+ * Atomically writes the living URS pair (`urs/urs.json` + `urs/urs.md`). Each
+ * file is committed via temp+rename so a crash never corrupts the live URS.
+ * `beforeCommit` runs after the JSON temp write, before its commit — a throw
+ * there simulates a mid-write crash and leaves the previous URS intact.
+ */
+export async function writeUrsDocument(
+  projectRoot: string,
+  doc: UrsDocument,
+  markdown: string = renderUrsMarkdown(doc),
+  opts?: { beforeCommit?: () => void | Promise<void> },
+): Promise<void> {
+  await writeFileAtomic(ursJsonPath(projectRoot), serializeUrsDocument(doc), {
+    beforeRename: opts?.beforeCommit,
+  });
+  await writeFileAtomic(ursMarkdownPath(projectRoot), markdown);
 }
 
 // ── Proposals ──────────────────────────────────────────────────────────

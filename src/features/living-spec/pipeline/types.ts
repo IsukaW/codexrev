@@ -120,6 +120,8 @@ export interface SpecAnalysisResult {
     readonly message: string;
     readonly retryable: boolean;
   };
+  /** Ids of the pending URS proposals raised for this change (Feature 2). */
+  readonly proposalIds?: readonly string[];
 }
 
 export type SpecProposalStatus = 'pending' | 'accepted' | 'rejected' | 'deferred';
@@ -134,6 +136,14 @@ export interface SpecProposal {
   readonly status: SpecProposalStatus;
   /** Ids of the `SpecImplication` entries this proposal realises. */
   readonly implicationIds: readonly string[];
+  /** Drift classification that triggered this proposal (Feature 2). */
+  readonly driftStatus?: SpecDriftStatus;
+  /** Ids of the URS sections this proposal touches (scoped — SO4). */
+  readonly sectionsTouched?: readonly string[];
+  /** The scoped requirement patch applied on accept (Feature 2). */
+  readonly patch?: ScopedUrsPatch;
+  /** Why this update is proposed (Feature 2). */
+  readonly rationale?: string;
 }
 
 /** A drift alert recorded against the living URS. */
@@ -161,4 +171,87 @@ export interface SpecUrsVersion {
   /** Triggering change id (commit sha, `staged`, ...). */
   readonly changeId: string;
   readonly createdAt: SpecTimestamp;
+}
+
+// ── Living URS model (Feature 2) ──────────────────────────────────────
+
+export type UrsRequirementType = 'functional' | 'nfr';
+
+/** One requirement section of the living URS, keyed by its stable `id`. */
+export interface UrsSection {
+  readonly id: string;
+  readonly title: string;
+  /** Requirement body (plain language). Rendered verbatim into the markdown. */
+  readonly text: string;
+  readonly type: UrsRequirementType;
+  /** URS version that last touched this section. */
+  readonly version: number;
+  /** Change id that last touched this section (NFR7 traceability). */
+  readonly lastChangeId: string;
+  /** Pointers back into source changes (`path:line` refs). */
+  readonly sourceRefs: readonly string[];
+}
+
+/** The machine-processable living URS state (`urs/urs.json`). */
+export interface UrsDocument {
+  readonly schemaVersion: 1;
+  readonly title: string;
+  /** Requirement sections in document order; `id` is the stable key. */
+  readonly sections: readonly UrsSection[];
+}
+
+// ── Scoped URS patch (Feature 2) ──────────────────────────────────────
+
+/** A single scoped requirement operation (add | modify | remove). */
+export interface UrsRequirementOp {
+  readonly op: SpecUrsPatchOp;
+  readonly sectionId: string;
+  /** Resulting section for `add`/`modify`. Absent for `remove`. */
+  readonly section?: UrsSection;
+  /** Markdown body for the section after this op (empty for `remove`). */
+  readonly markdown: string;
+}
+
+/**
+ * A scoped patch that touches ONLY the affected requirement sections (SO4).
+ * Applying it never rewrites unrelated sections.
+ */
+export interface ScopedUrsPatch {
+  readonly summary: string;
+  readonly ops: readonly UrsRequirementOp[];
+}
+
+/**
+ * A well-formed proposed URS update raised by the patcher: carries the scoped
+ * patch plus the metadata the human gate needs. Backward-compatible with
+ * `SpecProposal` (which it narrows to required fields).
+ */
+export interface UrsProposal extends SpecProposal {
+  readonly driftStatus: SpecDriftStatus;
+  readonly sectionsTouched: readonly string[];
+  readonly patch: ScopedUrsPatch;
+  readonly rationale: string;
+}
+
+// ── Versioned URS history (Feature 2) ─────────────────────────────────
+
+export type UrsVersionAction = 'seed' | 'accept';
+
+/**
+ * Append-only snapshot recorded under `versions/` for each accepted update:
+ * the resulting `urs.md` + `urs.json` plus traceability metadata (NFR7).
+ */
+export interface UrsVersionSnapshot {
+  readonly version: number;
+  /** Triggering change id (NFR7 link back to the change/diff). */
+  readonly changeId: string;
+  /** Timestamp of the accepted update. */
+  readonly timestamp: SpecTimestamp;
+  /** Alias of `timestamp` kept for `SpecUrsVersion` compatibility. */
+  readonly createdAt: SpecTimestamp;
+  readonly action: UrsVersionAction;
+  /** The `urs.md` content after this update. */
+  readonly markdown: string;
+  /** The `urs.json` content after this update. */
+  readonly urs: UrsDocument;
 }
