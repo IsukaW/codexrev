@@ -38,11 +38,40 @@ export function makeSpecAnalysisResult(
       {
         id: 'test-1',
         title: 'greets with the caller name',
-        steps: ['call greet("ada")', 'expect output to contain "ada"'],
+        type: 'update',
         linkedImplicationId: 'imp-1',
+        linkedRequirementId: 'sec-greeting',
+        preconditions: ['The greeting service is running.'],
+        steps: ['call greet("ada")', 'expect output to contain "ada"'],
+        expected: 'The greeting includes the caller name "ada".',
+        priority: 'high',
+        rationale: 'The greeting now includes the caller name (imp-1).',
       },
     ],
     quality: { model: 'heuristic', latencyMs: 0, schemaValid: true },
+    impactSummary: {
+      affectedRequirementIds: ['sec-greeting'],
+      affectedFiles: [{ path: 'src/greet.js', lines: [2, 3] }],
+      recommendedNextAction:
+        'Review the pending URS proposals for the modified requirement(s) and accept/reject/defer.',
+      confidence: 0.8,
+    },
+    driftAlerts: [
+      {
+        changeId: 'staged',
+        file: 'src/greet.js',
+        reason: 'Requirement "Greeting" (sec-greeting) is modified by this change: The greeting must include the caller name.',
+        affectedRequirement: 'sec-greeting',
+        proposedNextAction:
+          'Confirm the requirement update for sec-greeting, then decide proposal prop-1 (codexrev spec accept|reject|defer prop-1).',
+        severity: 'warning',
+        timestamp: '2026-10-17T00:00:00.000Z',
+      },
+    ],
+    behaviourChangeSummary: null,
+    requiresUrsUpdate: null,
+    inferenceError: null,
+    proposalIds: [],
     ...overrides,
   };
 }

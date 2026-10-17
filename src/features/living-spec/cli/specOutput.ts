@@ -6,9 +6,17 @@
 import type { AnalysisOutcome } from '../pipeline/analysisRunner.js';
 import type { ChangeBatch } from '../pipeline/changeBuffer.js';
 import type { DiffFile, ExtractedDiff } from '../pipeline/diffExtractor.js';
-import type { SpecAnalysisResult } from '../pipeline/types.js';
+import { formatDriftAlert } from '../pipeline/driftAlert.js';
+import type {
+  SpecChangeDriftAlert,
+  SpecAnalysisResult,
+  SpecImpactSummary,
+  SpecTestCaseDelta,
+} from '../pipeline/types.js';
 
 const MAX_LISTED_FILES = 25;
+const MAX_LISTED_DELTAS = 10;
+const MAX_LISTED_ALERTS = 10;
 
 function delta(added: number, removed: number): string {
   return `+${added} -${removed}`;
@@ -62,6 +70,62 @@ export function printAnalysisSummary(
 /** `--output json`: the SpecAnalysisResult and nothing else on stdout. */
 export function printAnalysisJson(result: SpecAnalysisResult): void {
   console.log(JSON.stringify(result, null, 2));
+}
+
+/** The output side of one analysis: test deltas, drift alerts, impact summary. */
+export interface OutputSideView {
+  readonly testDeltas: readonly SpecTestCaseDelta[];
+  readonly driftAlerts: readonly SpecChangeDriftAlert[];
+  readonly impactSummary: SpecImpactSummary;
+  readonly synthesis: {
+    readonly refined: boolean;
+    readonly refinementError?: { readonly code: string; readonly message: string };
+  };
+}
+
+/** `--output text` lines for the test deltas, impact summary and drift alerts. */
+export function printOutputSideSummary(view: OutputSideView): void {
+  const { testDeltas, driftAlerts, impactSummary } = view;
+  const counts = { new: 0, update: 0, obsolete: 0 };
+  for (const d of testDeltas) counts[d.type]++;
+
+  const provenance = view.synthesis.refined ? 'llm-refined' : 'rules';
+  console.log(
+    `  test deltas:     ${testDeltas.length}` +
+      (testDeltas.length > 0
+        ? ` (${counts.new} new, ${counts.update} update, ${counts.obsolete} obsolete — ${provenance})`
+        : ''),
+  );
+  for (const d of testDeltas.slice(0, MAX_LISTED_DELTAS)) {
+    console.log(
+      `    ${d.type.padEnd(8)} ${d.id}  [${d.priority}] ${d.title}  → ${d.linkedRequirementId}`,
+    );
+  }
+  if (testDeltas.length > MAX_LISTED_DELTAS) {
+    console.log(`    … and ${testDeltas.length - MAX_LISTED_DELTAS} more delta(s)`);
+  }
+
+  const files = impactSummary.affectedFiles
+    .map((f) => `${f.path}:${f.lines.length > 0 ? f.lines.join(',') : '?'}`)
+    .join(', ');
+  console.log(
+    `  impact:          requirements: ${
+      impactSummary.affectedRequirementIds.length > 0
+        ? impactSummary.affectedRequirementIds.join(', ')
+        : '(none)'
+    }`,
+  );
+  console.log(`                   files: ${files.length > 0 ? files : '(none)'}`);
+  console.log(`                   next: ${impactSummary.recommendedNextAction}`);
+  console.log(`                   confidence: ${impactSummary.confidence.toFixed(2)}`);
+
+  console.log(`  drift alerts:    ${driftAlerts.length > 0 ? String(driftAlerts.length) : '(none)'}`);
+  for (const alert of driftAlerts.slice(0, MAX_LISTED_ALERTS)) {
+    console.log(formatDriftAlert(alert));
+  }
+  if (driftAlerts.length > MAX_LISTED_ALERTS) {
+    console.log(`    … and ${driftAlerts.length - MAX_LISTED_ALERTS} more alert(s)`);
+  }
 }
 
 /** Per-event summary lines for one debounced watch batch. */

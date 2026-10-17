@@ -73,13 +73,70 @@ export interface SpecUrsPatch {
   readonly entries: readonly SpecUrsPatchEntry[];
 }
 
-/** A test case added/updated alongside the requirement change. */
+/** What the delta does to the test suite: add, rework, or retire a case. */
+export type SpecTestDeltaType = 'new' | 'update' | 'obsolete';
+
+export type SpecTestPriority = 'low' | 'medium' | 'high';
+
+/**
+ * An incremental TEST-CASE DELTA (never a full test plan): one case added,
+ * updated or retired alongside a requirement change (FR10/SO5).
+ */
 export interface SpecTestCaseDelta {
   readonly id: string;
   readonly title: string;
-  readonly steps: readonly string[];
+  readonly type: SpecTestDeltaType;
   /** Id of the `SpecImplication` this test case verifies. */
   readonly linkedImplicationId: string;
+  /** Id of the URS requirement section this test case verifies. */
+  readonly linkedRequirementId: string;
+  readonly preconditions: readonly string[];
+  readonly steps: readonly string[];
+  /** The observable outcome the case asserts. */
+  readonly expected: string;
+  readonly priority: SpecTestPriority;
+  /** Why this delta is needed (rule provenance / model rationale). */
+  readonly rationale: string;
+}
+
+/** A file (and the lines in it) affected by the change. */
+export interface SpecImpactFileRef {
+  /** Repo-relative path, forward slashes. */
+  readonly path: string;
+  /** 1-based line numbers attributed to this file (new-file numbering). */
+  readonly lines: readonly number[];
+}
+
+/** Concise change-impact summary for one analysis (FR11). */
+export interface SpecImpactSummary {
+  /** URS requirement ids touched by this change (existing + proposed). */
+  readonly affectedRequirementIds: readonly string[];
+  /** Affected files/lines, merged from the diff and implication sourceRefs. */
+  readonly affectedFiles: readonly SpecImpactFileRef[];
+  /** What the reader should do next. */
+  readonly recommendedNextAction: string;
+  /** Confidence in [0, 1] (mean implication confidence; 1 for diff-only runs). */
+  readonly confidence: number;
+}
+
+export type SpecDriftAlertSeverity = 'info' | 'warning' | 'critical';
+
+/**
+ * A drift alert raised by one conflicting/modified detection (FR9/NFR6).
+ * Appended to `reports/alerts.jsonl` and rendered in CLI output.
+ */
+export interface SpecChangeDriftAlert {
+  readonly changeId: string;
+  /** Primary file the detection points at. */
+  readonly file: string;
+  /** Why the change was flagged. */
+  readonly reason: string;
+  /** URS requirement section the detection affects. */
+  readonly affectedRequirement: string;
+  /** How to resolve / proceed. */
+  readonly proposedNextAction: string;
+  readonly severity: SpecDriftAlertSeverity;
+  readonly timestamp: SpecTimestamp;
 }
 
 export interface SpecAnalysisQuality {
@@ -110,16 +167,26 @@ export interface SpecAnalysisResult {
   readonly ursPatch: SpecUrsPatch;
   readonly testDeltas: readonly SpecTestCaseDelta[];
   readonly quality: SpecAnalysisQuality;
-  /** One/two-sentence summary of the observable behaviour change (model runs). */
-  readonly behaviourChangeSummary?: string;
-  /** True when the change means the living URS must be updated (model runs). */
-  readonly requiresUrsUpdate?: boolean;
+  /** Change-impact summary for this analysis (FR11) — always populated. */
+  readonly impactSummary: SpecImpactSummary;
+  /** Drift alerts raised by this change (FR9/NFR6) — empty when none. */
+  readonly driftAlerts: readonly SpecChangeDriftAlert[];
+  /**
+   * One/two-sentence summary of the observable behaviour change (model runs).
+   * `null` when the semantic half did not run — always present in the JSON.
+   */
+  readonly behaviourChangeSummary?: string | null;
+  /**
+   * True when the change means the living URS must be updated (model runs).
+   * `null` when the semantic half did not run.
+   */
+  readonly requiresUrsUpdate?: boolean | null;
   /** Structured inference failure, when the semantic half could not run. */
   readonly inferenceError?: {
     readonly code: string;
     readonly message: string;
     readonly retryable: boolean;
-  };
+  } | null;
   /** Ids of the pending URS proposals raised for this change (Feature 2). */
   readonly proposalIds?: readonly string[];
 }

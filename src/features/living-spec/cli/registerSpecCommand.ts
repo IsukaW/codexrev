@@ -16,7 +16,7 @@ export function specCommandBuilder<T>(y: Argv<T>): Argv<T> {
         describe: 'Target project root (default: current directory)',
       }),
     )
-    .command('analyze', 'Analyze a diff and propose living-URS updates (in development)', (yy) =>
+    .command('analyze', 'Analyze a diff and propose living-URS updates', (yy) =>
       yy
         .option('diff', {
           type: 'string',
@@ -56,7 +56,7 @@ export function specCommandBuilder<T>(y: Argv<T>): Argv<T> {
           describe: 'Per-request inference timeout in ms (default: 120000)',
         }),
     )
-    .command('watch', 'Watch source changes and keep the living URS in sync (in development)', (yy) =>
+    .command('watch', 'Watch source changes and keep the living URS in sync', (yy) =>
       yy
         .option('debounce', {
           type: 'number',
@@ -66,6 +66,12 @@ export function specCommandBuilder<T>(y: Argv<T>): Argv<T> {
         .option('paths', {
           type: 'string',
           describe: 'Comma-separated globs to watch (overrides config.json watchedPaths)',
+        })
+        .option('output', {
+          type: 'string',
+          choices: ['json', 'text'] as const,
+          default: 'text',
+          describe: 'Per-batch report format',
         })
         .option('dry-run', {
           type: 'boolean',

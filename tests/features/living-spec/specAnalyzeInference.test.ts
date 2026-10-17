@@ -203,8 +203,8 @@ describe('codexrev spec analyze — failure policy (prior state unchanged)', () 
     const r = report as SpecAnalysisResult;
     // prior authoritative state untouched: no implications applied
     expect(r.implications).toEqual([]);
-    expect(r.behaviourChangeSummary).toBeUndefined();
-    expect(r.requiresUrsUpdate).toBeUndefined();
+    expect(r.behaviourChangeSummary).toBeNull();
+    expect(r.requiresUrsUpdate).toBeNull();
     expect(r.quality).toEqual({
       model: 'heuristic',
       latencyMs: expect.any(Number),

@@ -10,53 +10,33 @@
 
 import path from 'node:path';
 import { runDeterministicAnalysis } from '../pipeline/analysisRunner.js';
-import { compareDrift } from '../pipeline/driftComparator.js';
-import {
-  applyInferenceToResult,
-  buildImplicationsLabel,
-  runImplicationInference,
-  type ImplicationsLabelFile,
-} from '../pipeline/inferenceEngine.js';
-import {
-  createLLMPort,
-  DEFAULT_INFERENCE_TIMEOUT_MS,
-  isNetworkProvider,
-  resolveInferenceTarget,
-  type LLMPort,
-} from '../pipeline/llmPort.js';
-import { formatDiffForPrompt } from '../pipeline/promptBuilder.js';
+import type { LLMPort } from '../pipeline/llmPort.js';
 import { seedUrsDocument } from '../pipeline/ursModel.js';
-import { generateProposals, proposalsToUrsPatch, validatePatch } from '../pipeline/ursPatcher.js';
+import { validatePatch } from '../pipeline/ursPatcher.js';
 import { acceptPatch, listVersionSnapshots, recordVersion } from '../pipeline/versionStore.js';
-import type {
-  SpecProposal,
-  SpecProposalStatus,
-  UrsDocument,
-} from '../pipeline/types.js';
-import { LivingSpecConfigError, LivingSpecError, LivingSpecProposalError } from '../tools/errors.js';
+import type { SpecProposal, SpecProposalStatus } from '../pipeline/types.js';
+import { LivingSpecError, LivingSpecProposalError } from '../tools/errors.js';
 import {
   ensureStateDir,
   listProposalIds,
   livingSpecDir,
   proposalsDir,
   readConfig,
+  readDriftAlerts,
   readProposal,
   readUrsDocument,
-  readUrsExcerpt,
   readUrsState,
-  saveImplicationsReport,
   saveProposal,
-  saveReport,
   ursMarkdownPath,
 } from '../tools/stateStore.js';
 import {
   printAnalysisJson,
   printAnalysisSummary,
+  printOutputSideSummary,
   printTruncationWarning,
 } from './specOutput.js';
+import { runAnalysisPass } from './analysisPass.js';
 import { runWatchSession } from './runWatchSession.js';
-
-const EMPTY_URS: UrsDocument = { schemaVersion: 1, title: 'User Requirements Specification', sections: [] };
 
 export interface SpecCommandFlags {
   diff?: string;
@@ -75,6 +55,8 @@ export interface SpecCommandFlags {
   timeout?: number;
 }
 
+const STATUS_ALERT_LIMIT = 5;
+
 /** Injectable collaborators (tests pass a fake `llm` — never a real network call). */
 export interface SpecCommandDeps {
   llm?: LLMPort;
@@ -92,7 +74,7 @@ export async function handleSpecCommand(
     case 'init-urs':
       return initUrsCommand(flags);
     case 'watch':
-      return watchCommand(flags);
+      return watchCommand(flags, deps);
     case 'status':
       return statusCommand(flags);
     case 'history':
@@ -132,126 +114,46 @@ async function analyzeCommand(flags: SpecCommandFlags, deps?: SpecCommandDeps): 
       maxBytes: cfg.maxBytes,
     });
 
-    // Semantic back half: infer requirement implications from the diff. Runs
-    // only when a model source is available (injected llm, --provider/--model,
-    // or config.modelOverride); otherwise the deterministic result stands.
-    let result = outcome.result;
-    let label: ImplicationsLabelFile | null = null;
-
-    if (shouldRunInference(cfg.modelOverride, flags, deps)) {
-      const target = resolveInferenceTarget({
-        provider: flags.provider,
-        model: flags.model,
-        modelOverride: cfg.modelOverride,
-      });
-      if (flags.offline && isNetworkProvider(target.provider)) {
-        throw new LivingSpecConfigError(
-          `--offline forbids the network provider "${target.provider}"; ` +
-            'use a local provider (ollama, lmstudio, litellm).',
-        );
-      }
-      const timeoutMs = flags.timeout ?? DEFAULT_INFERENCE_TIMEOUT_MS;
-      const llm =
-        deps?.llm ?? createLLMPort({ provider: target.provider, model: target.model, timeoutMs });
-      const ursExcerpt = await readUrsExcerpt(root);
-      const inferenceResult = await runImplicationInference(
-        { diff: formatDiffForPrompt(outcome.extraction.files), ...(ursExcerpt ? { ursExcerpt } : {}) },
-        llm,
-        {
-          model: target.model,
-          provider: target.provider,
-          timeoutMs,
-          maxTimeoutRetries: 1,
-        },
-      );
-
-      if (inferenceResult.ok) {
-        result = applyInferenceToResult(outcome.result, inferenceResult);
-      } else {
-        // Failure policy (NFR4/NFR5): leave the prior deterministic result
-        // untouched and surface a structured error instead.
-        result = { ...outcome.result, inferenceError: inferenceResult.error };
-        console.warn(
-          `  ⚠ implication inference failed (${inferenceResult.error.code}): ${inferenceResult.error.message}`,
-        );
-      }
-      label = buildImplicationsLabel({
-        changeId: outcome.changeId,
-        timestamp: outcome.result.timestamp,
-        provider: target.provider,
-        model: target.model,
-        result: inferenceResult,
-      });
-    }
-
-    // Deterministic drift + scoped proposals (Function 2). Runs on whatever
-    // implications the semantic half produced (empty when inference is off) —
-    // so the deterministic path still yields driftStatus 'no-semantic-change'
-    // and zero proposals. Nothing becomes authoritative without accept (NFR4).
-    const ursDoc = (await readUrsDocument(root)) ?? EMPTY_URS;
-    const drift = compareDrift(result.implications, ursDoc);
-    const proposals = generateProposals({
-      implications: result.implications,
-      drift,
-      doc: ursDoc,
-      changeId: outcome.changeId,
-      timestamp: result.timestamp,
+    // Full pipeline back half: implications → drift → proposals → test deltas,
+    // drift alerts and the change-impact summary (all persisted with the report).
+    const pass = await runAnalysisPass(root, outcome, {
+      ...(deps?.llm ? { llm: deps.llm } : {}),
+      ...(flags.provider !== undefined ? { provider: flags.provider } : {}),
+      ...(flags.model !== undefined ? { model: flags.model } : {}),
+      ...(flags.offline !== undefined ? { offline: flags.offline } : {}),
+      ...(flags.timeout !== undefined ? { timeoutMs: flags.timeout } : {}),
+      ...(flags.dryRun !== undefined ? { dryRun: flags.dryRun } : {}),
     });
-    if (!flags.dryRun) {
-      for (const p of proposals) await saveProposal(root, p);
-    }
-    result = {
-      ...result,
-      driftStatus: drift.overall,
-      ursPatch: proposalsToUrsPatch(proposals),
-      proposalIds: proposals.map((p) => p.id),
-    };
-
-    const reportFile = flags.dryRun ? null : await saveReport(root, result);
-    const labelFile =
-      flags.dryRun || !label ? null : await saveImplicationsReport(root, outcome.changeId, label);
+    const result = pass.result;
 
     if ((flags.output ?? 'text') === 'json') {
       if (outcome.extraction.truncated) printTruncationWarning(outcome.extraction);
       printAnalysisJson(result);
     } else {
-      printAnalysisSummary(outcome, { root, reportFile });
-      if (label) {
+      printAnalysisSummary(outcome, { root, reportFile: pass.reportFile });
+      if (pass.label) {
         console.log(
-          `  implications:    ${result.implications.length} (model ${label.model}, ${
-            label.ok ? 'ok' : `failed: ${label.error?.code ?? 'error'}`
+          `  implications:    ${result.implications.length} (model ${pass.label.model}, ${
+            pass.label.ok ? 'ok' : `failed: ${pass.label.error?.code ?? 'error'}`
           })`,
         );
         if (result.behaviourChangeSummary) {
           console.log(`  behaviour:       ${result.behaviourChangeSummary}`);
         }
-        if (result.requiresUrsUpdate !== undefined) {
+        if (result.requiresUrsUpdate !== undefined && result.requiresUrsUpdate !== null) {
           console.log(`  URS update:      ${result.requiresUrsUpdate ? 'required' : 'not required'}`);
         }
-        if (labelFile) console.log(`  labelled output: ${labelFile}`);
+        if (pass.labelFile) console.log(`  labelled output: ${pass.labelFile}`);
       }
       console.log(`  drift:           ${result.driftStatus}`);
       if (result.proposalIds && result.proposalIds.length > 0) {
         console.log(`  proposals:       ${result.proposalIds.join(', ')} (pending — accept/reject/defer)`);
       }
+      printOutputSideSummary(pass);
     }
   } catch (err) {
     handleExpectedError(err);
   }
-}
-
-/** Inference runs when a model source is available (injection or config). */
-function shouldRunInference(
-  modelOverride: string | undefined,
-  flags: SpecCommandFlags,
-  deps?: SpecCommandDeps,
-): boolean {
-  return Boolean(
-    deps?.llm ||
-      flags.provider !== undefined ||
-      flags.model !== undefined ||
-      modelOverride !== undefined,
-  );
 }
 
 async function initUrsCommand(flags: SpecCommandFlags): Promise<void> {
@@ -277,7 +179,7 @@ async function initUrsCommand(flags: SpecCommandFlags): Promise<void> {
   }
 }
 
-async function watchCommand(flags: SpecCommandFlags): Promise<void> {
+async function watchCommand(flags: SpecCommandFlags, deps?: SpecCommandDeps): Promise<void> {
   try {
     const root = resolveProject(flags);
     await ensureStateDir(root);
@@ -292,6 +194,10 @@ async function watchCommand(flags: SpecCommandFlags): Promise<void> {
       debounceMs: flags.debounce,
       watchedPaths,
       dryRun: flags.dryRun,
+      ...(deps?.llm ? { llm: deps.llm } : {}),
+      ...(flags.offline !== undefined ? { offline: flags.offline } : {}),
+      ...(flags.timeout !== undefined ? { timeoutMs: flags.timeout } : {}),
+      output: flags.output ?? 'text',
     });
   } catch (err) {
     handleExpectedError(err);
@@ -312,7 +218,9 @@ async function statusCommand(flags: SpecCommandFlags): Promise<void> {
         open.push(proposal);
       }
     }
-    const alerts = state?.lastDriftAlerts ?? [];
+    // Latest drift alerts from the append-only log (bounded list).
+    const allAlerts = await readDriftAlerts(root);
+    const alerts = allAlerts.slice(-STATUS_ALERT_LIMIT);
 
     console.log(`Living Specification Engine — status (${root})`);
     console.log(`  state dir:         ${livingSpecDir(root)}`);
@@ -330,9 +238,13 @@ async function statusCommand(flags: SpecCommandFlags): Promise<void> {
       const sections = p.sectionsTouched?.length ? ` → ${p.sectionsTouched.join(', ')}` : '';
       console.log(`    ${p.id}  ${p.status}${drift}  ${p.title}${sections}`);
     }
-    console.log(`  drift alerts:      ${alerts.length > 0 ? `${alerts.length} (latest last)` : '(none)'}`);
-    for (const alert of alerts.slice(-3)) {
-      console.log(`    ${alert.at}  ${alert.status}  ${alert.changeId}${alert.message ? ` — ${alert.message}` : ''}`);
+    console.log(
+      `  drift alerts:      ${allAlerts.length > 0 ? `${allAlerts.length} recorded (latest ${alerts.length})` : '(none)'}`,
+    );
+    for (const alert of alerts) {
+      console.log(
+        `    ${alert.timestamp}  ${alert.severity.padEnd(8)}  ${alert.file} — ${alert.reason}`,
+      );
     }
   } catch (err) {
     handleExpectedError(err);
@@ -426,7 +338,7 @@ function printSpecUsage(): void {
   console.error('usage: codexrev spec <subcommand> [flags]');
   console.error('  init-urs [--project <path>]');
   console.error('  analyze [--diff <ref>] [--project <path>] [--output json|text] [--dry-run]');
-  console.error('  watch   [--debounce <ms>] [--paths <globs>] [--dry-run]');
+  console.error('  watch   [--debounce <ms>] [--paths <globs>] [--output json|text] [--dry-run]');
   console.error('  status | history');
   console.error('  accept <id> | reject <id> | defer <id>');
 }

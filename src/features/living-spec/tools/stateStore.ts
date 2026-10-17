@@ -30,6 +30,7 @@ import {
 } from '../pipeline/ursModel.js';
 import type {
   SpecAnalysisResult,
+  SpecChangeDriftAlert,
   SpecProposal,
   SpecUrsState,
   SpecUrsVersion,
@@ -156,6 +157,14 @@ export function proposalsDir(projectRoot: string): string {
 
 export function reportsDir(projectRoot: string): string {
   return path.join(livingSpecDir(projectRoot), 'reports');
+}
+
+/**
+ * Append-only drift-alert log: `reports/alerts.jsonl`, one JSON alert per line
+ * (FR9/NFR6). Newest entries at the end; never rewritten in place.
+ */
+export function alertsLogPath(projectRoot: string): string {
+  return path.join(reportsDir(projectRoot), 'alerts.jsonl');
 }
 
 export function ursStatePath(projectRoot: string): string {
@@ -440,4 +449,66 @@ export async function saveImplicationsReport(
   await fs.mkdir(reportsDir(projectRoot), { recursive: true });
   await fs.writeFile(file, JSON.stringify(label, null, 2), 'utf-8');
   return file;
+}
+
+// ── Drift alerts (append-only JSONL) ──────────────────────────────────
+
+/**
+ * Appends drift alerts to `reports/alerts.jsonl`, one compact JSON object per
+ * line (valid JSONL). The log is append-only: nothing is rewritten, so the
+ * alert history stays intact (NFR6). Returns the log path.
+ */
+export async function appendDriftAlerts(
+  projectRoot: string,
+  alerts: readonly SpecChangeDriftAlert[],
+): Promise<string> {
+  const file = alertsLogPath(projectRoot);
+  if (alerts.length === 0) return file;
+  await fs.mkdir(reportsDir(projectRoot), { recursive: true });
+  const lines = alerts.map((a) => JSON.stringify(a)).join('\n') + '\n';
+  await fs.appendFile(file, lines, 'utf-8');
+  return file;
+}
+
+function isDriftAlert(raw: unknown): raw is SpecChangeDriftAlert {
+  if (typeof raw !== 'object' || raw === null) return false;
+  const a = raw as Record<string, unknown>;
+  return (
+    typeof a.changeId === 'string' &&
+    typeof a.file === 'string' &&
+    typeof a.reason === 'string' &&
+    typeof a.affectedRequirement === 'string' &&
+    typeof a.proposedNextAction === 'string' &&
+    typeof a.severity === 'string' &&
+    typeof a.timestamp === 'string'
+  );
+}
+
+/**
+ * Reads the alert log (oldest first). Malformed lines are skipped rather than
+ * failing the read — the log is human-auditable and may be hand-edited.
+ * Returns `[]` when the log does not exist yet.
+ */
+export async function readDriftAlerts(projectRoot: string): Promise<readonly SpecChangeDriftAlert[]> {
+  let raw: string;
+  try {
+    raw = await fs.readFile(alertsLogPath(projectRoot), 'utf-8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw new LivingSpecStateError(
+      `failed to read ${alertsLogPath(projectRoot)}: ${(err as Error).message}`,
+    );
+  }
+  const alerts: SpecChangeDriftAlert[] = [];
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue;
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      if (isDriftAlert(parsed)) alerts.push(parsed);
+    } catch {
+      // skip malformed line — the rest of the log stays readable
+    }
+  }
+  return alerts;
 }

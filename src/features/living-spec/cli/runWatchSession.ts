@@ -16,15 +16,17 @@ import {
 } from '../pipeline/analysisRunner.js';
 import { ChangeBuffer, hashContent, type ChangeBatch } from '../pipeline/changeBuffer.js';
 import { DEFAULT_SOURCE_GLOBS } from '../pipeline/diffExtractor.js';
+import type { LLMPort } from '../pipeline/llmPort.js';
 import { LivingSpecError } from '../tools/errors.js';
 import {
   createPathMatcher,
   isAlwaysExcludedPath,
 } from '../tools/pathMatcher.js';
-import { readConfig, saveReport } from '../tools/stateStore.js';
+import { readConfig } from '../tools/stateStore.js';
 import { createChokidarWatcher } from '../watch/chokidarWatcher.js';
 import type { WatchEvent, WatcherFactory } from '../watch/watcherPort.js';
-import { printWatchBatchSummary } from './specOutput.js';
+import { runAnalysisPass } from './analysisPass.js';
+import { printAnalysisJson, printOutputSideSummary, printWatchBatchSummary } from './specOutput.js';
 
 /**
  * Saved files are worktree changes; `git diff HEAD` covers staged + unstaged
@@ -47,6 +49,14 @@ export interface WatchSessionOptions {
   readonly stopSignal?: AbortSignal;
   /** Test hook invoked after each analysed batch. */
   readonly onBatchAnalyzed?: (outcome: AnalysisOutcome) => void;
+  /** Injected model port for the semantic half (tests pass a fake). */
+  readonly llm?: LLMPort;
+  /** Assert no network provider is used for inference. */
+  readonly offline?: boolean;
+  /** Per-request inference timeout (ms). */
+  readonly timeoutMs?: number;
+  /** Per-batch report format (default: text summary). */
+  readonly output?: 'json' | 'text';
 }
 
 async function hashEvent(projectRoot: string, event: WatchEvent): Promise<string | null> {
@@ -65,6 +75,7 @@ export async function runWatchSession(options: WatchSessionOptions): Promise<voi
   const debounceMs = options.debounceMs ?? cfg.debounceMs;
   const watchedPaths = options.watchedPaths ?? cfg.watchedPaths;
   const dryRun = options.dryRun === true;
+  const output = options.output ?? 'text';
 
   const watchMatcher = createPathMatcher([...watchedPaths]);
   const includeMatcher = createPathMatcher([...(cfg.includePaths ?? DEFAULT_SOURCE_GLOBS)]);
@@ -90,8 +101,21 @@ export async function runWatchSession(options: WatchSessionOptions): Promise<voi
         );
         return;
       }
-      const reportFile = dryRun ? null : await saveReport(root, outcome.result);
-      printWatchBatchSummary(outcome, batch, reportFile);
+      // Same pipeline back half as `spec analyze`: implications (when a model
+      // is configured) → drift → proposals → test deltas + drift alerts +
+      // change-impact summary, all persisted with the report JSON.
+      const pass = await runAnalysisPass(root, outcome, {
+        ...(options.llm ? { llm: options.llm } : {}),
+        ...(options.offline !== undefined ? { offline: options.offline } : {}),
+        ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+        dryRun,
+      });
+      if (output === 'json') {
+        printAnalysisJson(pass.result);
+      } else {
+        printWatchBatchSummary(outcome, batch, pass.reportFile);
+        printOutputSideSummary(pass);
+      }
       options.onBatchAnalyzed?.(outcome);
     } catch (err) {
       if (err instanceof LivingSpecError) {

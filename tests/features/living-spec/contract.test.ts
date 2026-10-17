@@ -17,11 +17,17 @@ describe('living-spec stable contract', () => {
     const result = makeSpecAnalysisResult();
     expect(Object.keys(result).sort()).toEqual(
       [
+        'behaviourChangeSummary',
         'changeId',
+        'driftAlerts',
         'driftStatus',
         'files',
+        'impactSummary',
         'implications',
+        'inferenceError',
+        'proposalIds',
         'quality',
+        'requiresUrsUpdate',
         'testDeltas',
         'timestamp',
         'ursPatch',
@@ -37,13 +43,36 @@ describe('living-spec stable contract', () => {
     expect(result.testDeltas[0]).toEqual({
       id: expect.any(String),
       title: expect.any(String),
-      steps: expect.any(Array),
+      type: expect.stringMatching(/^(new|update|obsolete)$/),
       linkedImplicationId: expect.any(String),
+      linkedRequirementId: expect.any(String),
+      preconditions: expect.any(Array),
+      steps: expect.any(Array),
+      expected: expect.any(String),
+      priority: expect.stringMatching(/^(low|medium|high)$/),
+      rationale: expect.any(String),
     });
     expect(result.quality).toEqual({
       model: expect.any(String),
       latencyMs: expect.any(Number),
       schemaValid: expect.any(Boolean),
+    });
+    expect(result.impactSummary).toEqual({
+      affectedRequirementIds: expect.any(Array),
+      affectedFiles: [
+        { path: expect.any(String), lines: expect.any(Array) },
+      ],
+      recommendedNextAction: expect.any(String),
+      confidence: expect.any(Number),
+    });
+    expect(result.driftAlerts[0]).toEqual({
+      changeId: expect.any(String),
+      file: expect.any(String),
+      reason: expect.any(String),
+      affectedRequirement: expect.any(String),
+      proposedNextAction: expect.any(String),
+      severity: expect.stringMatching(/^(info|warning|critical)$/),
+      timestamp: expect.any(String),
     });
     expect([
       'aligned',

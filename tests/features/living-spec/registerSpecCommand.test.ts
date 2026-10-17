@@ -37,8 +37,9 @@ describe('specCommandBuilder', () => {
     // yargs wraps the help at ~80 cols and can split words mid-way, so
     // compare against a whitespace-free haystack.
     const flat = help.replace(/\s+/g, '');
-    // analyze/watch are scaffolds — the help must say so.
-    expect(flat).toContain('indevelopment');
+    // analyze/watch run the full pipeline — the help describes the real job.
+    expect(flat).toContain('Analyzeadiffandproposeliving-URSupdates');
+    expect(flat).toContain('WatchsourcechangesandkeepthelivingURSinsync');
     expect(flat).toContain('AcceptapendingURSproposal');
   });
 
@@ -67,10 +68,11 @@ describe('specCommandBuilder', () => {
     expect(argv.dryRun).toBe(true);
   });
 
-  it('defaults watch to an 800 ms debounce with no dry-run', async () => {
+  it('defaults watch to an 800 ms debounce, text output, no dry-run', async () => {
     const argv = await buildSpec().parseAsync(['watch']);
     expect(argv._[0]).toBe('watch');
     expect(argv.debounce).toBe(800);
+    expect(argv.output).toBe('text');
     expect(argv.dryRun).toBe(false);
   });
 
@@ -81,10 +83,13 @@ describe('specCommandBuilder', () => {
       '1500',
       '--paths',
       'src/**,test/**',
+      '--output',
+      'json',
       '--dry-run',
     ]);
     expect(argv.debounce).toBe(1500);
     expect(argv.paths).toBe('src/**,test/**');
+    expect(argv.output).toBe('json');
     expect(argv.dryRun).toBe(true);
   });
 

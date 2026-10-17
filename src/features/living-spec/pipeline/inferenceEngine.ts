@@ -169,8 +169,11 @@ function toUsage(usage: UsageStats | undefined): InferenceUsage | undefined {
  * Runs one generate call with a hard timeout. Aborts the underlying request on
  * timeout, but settles the race on the timer itself so an abort-induced
  * rejection can never be misread as a non-timeout failure.
+ *
+ * Exported for other single-shot living-spec LLM jobs (e.g. test-delta
+ * refinement) so every model call shares one timeout discipline.
  */
-async function generateWithTimeout(
+export async function generateWithTimeout(
   llm: LLMPort,
   req: GenerateRequest,
   timeoutMs: number,
@@ -334,7 +337,7 @@ export function applyInferenceToResult(
     behaviourChangeSummary: success.output.behaviourChangeSummary,
     requiresUrsUpdate: success.output.requiresUrsUpdate,
     quality: toSpecQuality(success.quality),
-    inferenceError: undefined,
+    inferenceError: null,
   };
 }
 
