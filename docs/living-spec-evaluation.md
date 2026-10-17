@@ -117,7 +117,7 @@ scenarios × 3 modes = 42 runs). Numbers vary slightly per machine; the JSON rep
 
 ## 6. Test inventory
 
-`tests/features/living-spec/` — **26 files, 234 tests, all green** (`npm test`).
+`tests/features/living-spec/` — **28 files, 253 tests, all green** (`npm test`).
 
 | Test file | Tests | Covers |
 | --- | --- | --- |
@@ -129,10 +129,12 @@ scenarios × 3 modes = 42 runs). Numbers vary slightly per machine; the JSON rep
 | `promptBuilder.test.ts` | 7 | prompt injection hardening, deterministic assembly |
 | `pathMatcher.test.ts` | 7 | glob matching, always-excluded paths |
 | `stateStore.test.ts` | 16 | config schema, URS read/write, proposals, reports, atomic write |
-| `ursModel.test.ts` (ursPatcher/ursModel area) | 15 (`ursPatcher.test.ts`) | scoped patch generation/apply, validatePatch (SO4) |
+| `ursPatcher.test.ts` | 15 | scoped patch generation/apply, validatePatch (SO4) |
 | `versionStore.test.ts` | 3 | version snapshots + traceability (NFR7) |
+| `pdfRenderer.test.ts` | 5 | hand-rolled PDF: xref byte accuracy, pagination, WinAnsi/escaping |
+| `ursBootstrap.test.ts` | 11 | bootstrap scan/prompt/sanitisation, approval gate, dual-format v0 |
 | `contract.test.ts` | 3 | stable `SpecAnalysisResult` JSON round-trip, every field |
-| `fixtures` + `registerSpecCommand.test.ts` | 11 | yargs flags incl. eval, help text |
+| `registerSpecCommand.test.ts` | 11 | yargs flags incl. bootstrap/eval, help text |
 | `specAnalyzeCli.test.ts` | 6 | analyze end-to-end (report JSON, dry-run, json mode) |
 | `specAnalyzeInference.test.ts` | 6 | inference wiring, failure policy, offline guard (NFR2/FR14) |
 | `ursGateCli.test.ts` | 5 | accept/reject/defer human gate (NFR4), status listing |
@@ -140,21 +142,21 @@ scenarios × 3 modes = 42 runs). Numbers vary slightly per machine; the JSON rep
 | `testDeltaSynthesizer.test.ts` | 15 | rule deltas per category, LLM fallback, links (FR10/SO5) |
 | `impactSummary.test.ts` | 5 | file/line refs match the diff (FR11) |
 | `driftAlert.test.ts` | 4 | NFR6 alert fields, alerts.jsonl append, e2e alert |
-| `analyzeOutputContract.test.ts` | 3 | every contract field populated or explicitly null |
+| `analyzeOutputContract.test.ts` | 2 | every contract field populated or explicitly null |
 | `reportRenderer.test.ts` | 21 | aligned tables, failure-path messages, status/history/decisions |
 | `specSessionState.test.ts` | 15 | watch reducer, counts, dedupe signal, shutdown summary |
 | `specHelp.test.ts` | 6 | hand-rolled help screen + dispatch + exit codes 0/2 |
 | `evaluationHarness.test.ts` | 15 | corpus validation, metric math, mode comparison, report |
-| `evalCli.test.ts` | 4 | `spec eval` offline run, json mode, bad usage, missing corpus |
+| `evalCli.test.ts` | 6 | `spec eval` offline run, json mode, bad usage, missing corpus |
 | `hardening.test.ts` | 8 | failure-path sweep (below) |
 
 **Failure-path hardening sweep** (`hardening.test.ts` + the suites it pairs with):
 
 | Path | Covered by |
 | --- | --- |
-| Malformed model output | `specAnalyzeInference.test.ts` (malformed + schema-invalid), `evaluationHarness.test.ts` (eval malformed) |
+| Malformed model output | `specAnalyzeInference.test.ts` (malformed + schema-invalid), `evaluationHarness.test.ts` (eval malformed), `ursBootstrap.test.ts` (bootstrap malformed — nothing written) |
 | Model timeout | `hardening.test.ts` → structured `timeout`, deterministic result stands; `evaluationHarness.test.ts` (eval timeout) |
-| Model-server unavailable | `hardening.test.ts` → `provider_unavailable` + actionable hint |
+| Model-server unavailable | `hardening.test.ts` → `provider_unavailable` + actionable hint; `ursBootstrap.test.ts` (bootstrap: "start ollama / lm studio", nothing written) |
 | Unsupported file type | `hardening.test.ts` → clean zero-file analysis |
 | Missing prior URS | `hardening.test.ts` → `new` classification + scoped `req-*` proposals |
 | Oversized diff | `hardening.test.ts` → truncation flagged with `maxBytes` hint (parser: `diffExtractor.test.ts`) |

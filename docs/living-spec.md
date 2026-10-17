@@ -19,6 +19,7 @@ screen and every flag in one place.
 
 | Subcommand | Purpose |
 | --- | --- |
+| `spec bootstrap` | Generate **URS Version 0** from the implemented code (approval required) → JSON + MD + PDF |
 | `spec analyze` | One-shot analysis of a diff → report JSON (proposals + test deltas + drift alerts + impact summary) |
 | `spec watch` | Foreground watch session over the same pipeline (command-triggered only — never a background daemon) |
 | `spec eval` | Controlled evaluation: replay the labelled scenario corpus → metrics report ([evidence pack](living-spec-evaluation.md)) |
@@ -89,6 +90,37 @@ codexrev spec eval --mode live --provider ollama
 
 There is deliberately **no** `spec daemon`, no background service and no installed git hook:
 analysis only ever runs while an `analyze`/`watch`/`eval` invocation is in progress.
+
+## Bootstrap — URS Version 0 from existing code
+
+For a project **without** a living URS, `codexrev spec bootstrap` derives the initial
+document from what is already implemented:
+
+1. **Scan** — walks the configured `includePaths`, prioritising business-logic homes
+   (controllers, services, repositories, handlers, routes, use cases) and bounding the
+   read (30 files / 24 KB per file / 200 KB total; `node_modules`, `dist`, `.git` and
+   `.codexrev` are never scanned; binaries are skipped).
+2. **Generate** — one hardened model call (UNTRUSTED-DATA markers) returns requirement
+   sections, each with `sourceRefs` into the scanned files; the payload is STRICT-schema
+   validated (NFR5) and every reference is sanitised — refs that do not resolve into the
+   scan are dropped, sections left without any reference are dropped.
+3. **Approval gate (NFR4)** — the draft preview (sections + source references) is shown
+   first; nothing is written until the user answers `Accept this as URS Version 0? [y/N]`
+   on a TTY, or passes `--yes` for scripts/CI (required off-TTY — exit 2 otherwise).
+   `--dry-run` previews without ever asking to save; an existing URS is never overwritten.
+
+On approval the URS lands in **both formats**, and every later approved version does too:
+
+```text
+urs/urs.json        machine-readable document (codebase reference)
+urs/urs.md          markdown rendering
+urs/urs.pdf         viewer-friendly PDF (hand-rolled renderer, no deps)
+versions/v0.json    Version 0 snapshot (action: bootstrap) + versions/v0.pdf
+versions/vN.json    each accepted update keeps the same json + pdf pair
+```
+
+The status counter starts at **Version 0** for a bootstrapped URS, so the first
+`spec accept` bumps it to v1 exactly like the `init-urs` seed path.
 
 ## Pipeline
 
@@ -357,8 +389,8 @@ All state lives inside the *target* project (`.codexrev/living-spec/`, created o
 ```text
 <target-project>/.codexrev/living-spec/
   config.json             feature config (see below)
-  urs/                    living URS markdown (urs.md) + machine state (urs.json, state.json)
-  versions/               versioned URS snapshots (one json per version)
+  urs/                    living URS: urs.json + urs.md + urs.pdf, state.json
+  versions/               versioned snapshots: vN.json + vN.pdf per approved version
   proposals/              accept/reject/defer proposals (one json per proposal)
   reports/                analysis outputs (one json per changeId, <changeId>.implications.json)
   reports/alerts.jsonl    append-only drift-alert log (one JSON object per line)
