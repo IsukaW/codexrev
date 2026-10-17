@@ -7,13 +7,12 @@
 // passed before and fail now. If the baseline was already failing, the tests
 // can't serve as a gate and the verdict says so instead of silently passing.
 
-import { exec } from 'node:child_process';
-import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { runBuildRole } from '../roles/build.js';
 import { ContextAggregator } from './contextAggregator.js';
 import type { ParsedDiff } from './diffReader.js';
 import type { ILLMProvider } from './illmProvider.js';
+import { detectTestCommand as detectToolchainTestCommand, planTestCommands, runToolchainCommand, stripBuildToolNoise, type ToolchainOptions } from '../../../core/toolchains/index.js';
 
 export type TestStatus = 'pass' | 'fail' | 'not-run';
 
@@ -36,11 +35,13 @@ export interface ValidationVerdict {
 
 export interface ValidationOptions {
   readonly runTests?: boolean; // default true
-  readonly testTimeoutMs?: number; // default 5 min
+  /** overrides the toolchain's own default (5 min; 15 min for Maven/Gradle) */
+  readonly testTimeoutMs?: number;
+  /** settings `toolchain` (explicit build/test commands) + sandbox permission */
+  readonly toolchain?: ToolchainOptions;
 }
 
 const DEFAULT_TEST_TIMEOUT_MS = 300_000;
-const NPM_PLACEHOLDER_TEST = /no test specified/i;
 
 const unusedLlm: ILLMProvider = {
   id: 'openai',
@@ -52,38 +53,18 @@ const unusedLlm: ILLMProvider = {
   },
 };
 
-export async function detectTestCommand(dir: string): Promise<{ command: string; label: string } | null> {
-  const pkgPath = path.join(dir, 'package.json');
-  try {
-    const pkg = JSON.parse(await fs.readFile(pkgPath, 'utf-8')) as { scripts?: Record<string, string> };
-    const script = pkg.scripts?.test;
-    if (script && !NPM_PLACEHOLDER_TEST.test(script)) return { command: 'npm test --silent', label: 'npm test' };
-  } catch {
-    // no package.json / unreadable — try the other ecosystems
-  }
-  if (await exists(path.join(dir, 'go.mod'))) return { command: 'go test ./...', label: 'go test' };
-  if (await exists(path.join(dir, 'Cargo.toml'))) return { command: 'cargo test --quiet', label: 'cargo test' };
-  if ((await exists(path.join(dir, 'pytest.ini'))) || (await exists(path.join(dir, 'tests')))) {
-    if (await exists(path.join(dir, 'pyproject.toml')) || (await exists(path.join(dir, 'pytest.ini')))) {
-      return { command: 'python3 -m pytest -q', label: 'pytest' };
-    }
-  }
-  return null;
+// kept for callers/tests that only need the command; the detection itself lives in the toolchain registry
+export async function detectTestCommand(dir: string, toolchain?: ToolchainOptions): Promise<{ command: string; label: string; timeoutMs?: number } | null> {
+  return detectToolchainTestCommand(dir, toolchain);
 }
 
-function runShell(command: string, cwd: string, timeoutMs: number): Promise<{ code: number; output: string; timedOut: boolean }> {
-  return new Promise((resolve) => {
-    exec(
-      command,
-      { cwd, timeout: timeoutMs, maxBuffer: 20 * 1024 * 1024, env: { ...process.env, CI: '1', FORCE_COLOR: '0', NO_COLOR: '1' } },
-      (error, stdout, stderr) => {
-        const output = `${stdout}${stderr}`.trim();
-        if (!error) return resolve({ code: 0, output, timedOut: false });
-        const e = error as NodeJS.ErrnoException & { killed?: boolean; code?: number | string };
-        resolve({ code: typeof e.code === 'number' ? e.code : 1, output, timedOut: e.killed === true });
-      },
-    );
-  });
+// test output names files by the temporary copy's absolute path, which means nothing to the fixer (or a person)
+// and pushes the actual failure out of the trimmed tail; the project-relative path is what they can act on
+function projectRelative(output: string, dir: string): string {
+  const variants = new Set([dir, dir.replace(/^\/private(?=\/)/, ''), `/private${dir}`]);
+  let out = output;
+  for (const v of variants) out = out.split(`${v}${path.sep}`).join('');
+  return out;
 }
 
 export async function runValidation(dir: string, diff: ParsedDiff, opts: ValidationOptions = {}): Promise<ValidationSnapshot> {
@@ -93,6 +74,7 @@ export async function runValidation(dir: string, diff: ParsedDiff, opts: Validat
     diff,
     aggregator: new ContextAggregator(diff),
     cwd: dir,
+    toolchain: opts.toolchain,
   });
   const buildErrorKeys = build.findings.filter((f) => f.severity === 'high').map((f) => `${f.file}|${f.description}`);
   // "Could not run" findings are medium; no findings + a "nothing to check" summary means nothing was verified either
@@ -100,14 +82,27 @@ export async function runValidation(dir: string, diff: ParsedDiff, opts: Validat
 
   let tests: ValidationSnapshot['tests'] = { status: 'not-run', output: 'no test command detected' };
   if (opts.runTests !== false) {
-    const detected = await detectTestCommand(dir);
-    if (detected) {
-      const r = await runShell(detected.command, dir, opts.testTimeoutMs ?? DEFAULT_TEST_TIMEOUT_MS);
-      if (r.timedOut) {
-        tests = { status: 'not-run', command: detected.label, output: `${detected.label} timed out — treated as inconclusive` };
-      } else {
-        tests = { status: r.code === 0 ? 'pass' : 'fail', command: detected.label, output: r.output.slice(-3000) };
-      }
+    // one suite per module the change touches (a monorepo's backend AND frontend), see core/toolchains/modules.ts
+    const suites = await planTestCommands(dir, diff.files.map((f) => f.path), opts.toolchain);
+    const results: Array<{ label: string; status: TestStatus; output: string }> = [];
+    for (const suite of suites) {
+      const label = suite.dir === '.' ? suite.label : `${suite.label} (${suite.dir})`;
+      // not under the OS sandbox: in the temporary copy node_modules is a symlink to the real project's,
+      // and test runners write caches through it, which a write-restricted profile would turn into failures
+      const timeoutMs = opts.testTimeoutMs ?? suite.timeoutMs ?? DEFAULT_TEST_TIMEOUT_MS;
+      const r = await runToolchainCommand(suite.command, path.join(dir, suite.dir), { timeoutMs, sandbox: false });
+      results.push(
+        r.timedOut
+          ? { label, status: 'not-run', output: `${label} timed out — treated as inconclusive` }
+          : { label, status: r.code === 0 ? 'pass' : 'fail', output: projectRelative(stripBuildToolNoise(r.output), dir) },
+      );
+    }
+    if (results.length > 0) {
+      // a failing suite is what matters for the gate, and the part of the output worth keeping
+      const status: TestStatus = results.some((r) => r.status === 'fail') ? 'fail' : results.some((r) => r.status === 'not-run') ? 'not-run' : 'pass';
+      const shown = status === 'fail' ? results.filter((r) => r.status === 'fail') : results;
+      const output = shown.length === 1 ? shown[0]!.output : shown.map((r) => `── ${r.label} ──\n${r.output.slice(-1500)}`).join('\n\n');
+      tests = { status, command: results.map((r) => r.label).join(', '), output: output.slice(-3000) };
     }
   }
   return { buildErrorKeys, buildVerified, buildSummary: build.summary, tests };
@@ -132,13 +127,4 @@ export function compareValidation(baseline: ValidationSnapshot, after: Validatio
     notes.push(`tests were already failing before the fix (${baseline.tests.command}) — not used as a gate`);
   }
   return { acceptable: reasons.length === 0, reasons, notes };
-}
-
-async function exists(p: string): Promise<boolean> {
-  try {
-    await fs.access(p);
-    return true;
-  } catch {
-    return false;
-  }
 }
