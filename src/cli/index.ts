@@ -16,6 +16,7 @@ import { runNonInteractive } from './nonInteractive.js';
 import { runInit } from './init.js';
 import { handleModelsCommand } from './models.js';
 import { renderHelp, renderVersion } from './help.js';
+import { renderSpecHelp } from '../features/living-spec/cli/specHelp.js';
 import {
   installExtension,
   loadExtensions,
@@ -202,6 +203,22 @@ async function main(): Promise<void> {
     .exitProcess(false)
     .parseAsync()) as unknown as CliArgs;
 
+  // `codexrev spec [--help]` / `codexrev spec <sub> --help` get the hand-rolled
+  // per-command screen instead of the global help (same convention as the
+  // global renderHelp below, but scoped to the spec command family).
+  if (argv._.includes('spec')) {
+    const specRest = argv._.slice(argv._.indexOf('spec') + 1).map(String);
+    const wantsHelp =
+      argv.help === true ||
+      hideBin(process.argv).includes('-h') ||
+      hideBin(process.argv).includes('--help') ||
+      specRest.includes('help');
+    if (wantsHelp) {
+      renderSpecHelp(specRest.find((s) => s !== 'help' && s !== '-h' && s !== '--help'));
+      return;
+    }
+  }
+
   if (argv.help || hideBin(process.argv).includes('-h')) {
     renderHelp();
     return;
@@ -300,6 +317,11 @@ async function main(): Promise<void> {
 
   if (argv._.includes('spec')) {
     const rest = argv._.slice(argv._.indexOf('spec') + 1);
+    // yargs consumes the `<id>` positional of accept/reject/defer into
+    // argv.id — hand it back so the handler sees `accept <id>`.
+    if (argv.id !== undefined && !rest.map(String).includes(String(argv.id))) {
+      rest.push(String(argv.id));
+    }
     await handleSpecCommand(rest, {
       diff: argv.diff as string | undefined,
       project: (argv as Record<string, unknown>).project as string | undefined,
@@ -313,6 +335,10 @@ async function main(): Promise<void> {
       model: (argv as Record<string, unknown>).model as string | undefined,
       offline: (argv as Record<string, unknown>).offline as boolean | undefined,
       timeout: (argv as Record<string, unknown>).timeout as number | undefined,
+      quiet: (argv as Record<string, unknown>).quiet as boolean | undefined,
+      corpus: (argv as Record<string, unknown>).corpus as string | undefined,
+      mode: (argv as Record<string, unknown>).mode as string | undefined,
+      live: (argv as Record<string, unknown>).live as boolean | undefined,
     });
     return;
   }

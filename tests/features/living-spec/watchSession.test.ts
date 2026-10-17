@@ -96,6 +96,10 @@ describe('runWatchSession (foreground session, real chokidar provider)', () => {
     // the foreground session ends cleanly on the stop signal (what Ctrl+C fires)
     controller.abort();
     await session;
-    expect(logs.join('\n')).toContain('watch session stopped');
+    const stopped = logs.join('\n');
+    expect(stopped).toContain('watch session stopped');
+    // clean-shutdown summary: analyzed batches, deduped saves, proposals, alerts
+    expect(stopped).toContain('Session summary — 1 batch(es) analyzed');
+    expect(stopped).toContain('report(s) written');
   }, 30_000);
 });

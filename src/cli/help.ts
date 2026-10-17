@@ -228,15 +228,23 @@ export function renderHelp(): void {
 
   heading('Spec subcommands (with `codexrev spec ...`)');
   const specRows: Array<[string, string, string]> = [
-    ['analyze', '[--diff <ref>] [--output json|text]', 'One-shot diff analysis (in development)'],
-    ['watch', '[--debounce <ms>] [--paths <globs>]', 'Foreground watch session (in development)'],
+    ['analyze', '[--diff <ref>] [--dry-run]', 'One-shot diff analysis → report JSON'],
+    ['watch', '[--debounce <ms>] [--paths <globs>]', 'Foreground watch session (live TUI on a TTY)'],
+    ['eval', '[--corpus <dir>] [--mode <mode>]', 'Replay the labelled corpus → evaluation report'],
     ['status', '', 'Show URS version, pending proposals, drift alerts'],
     ['history', '', 'List URS versions with trigger change ids'],
     ['accept <id>', '', 'Accept a pending URS proposal'],
     ['reject <id>', '', 'Reject a pending URS proposal'],
     ['defer <id>', '', 'Defer a pending URS proposal'],
+    ['help [sub]', '', 'Per-command help screen'],
   ];
   for (const [flag, arg, desc] of specRows) writeRow(flag, arg, desc);
+  process.stdout.write(
+    `  ${dim('Global spec flags: --project <path> · --output json|text · --quiet')}\n`,
+  );
+  process.stdout.write(
+    `  ${dim('Exit codes: 0 ok · 1 error · 2 bad usage')}\n`,
+  );
 
   heading('Learn more');
   process.stdout.write(

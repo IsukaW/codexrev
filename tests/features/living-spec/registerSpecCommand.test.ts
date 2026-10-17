@@ -6,6 +6,7 @@ import { specCommandBuilder } from '../../../src/features/living-spec/cli/regist
 const SUBCOMMANDS = [
   'analyze',
   'watch',
+  'eval',
   'status',
   'history',
   'accept',
@@ -99,5 +100,63 @@ describe('specCommandBuilder', () => {
       expect(argv._[0]).toBe(decision);
       expect(argv.id).toBe('prop-42');
     }
+  });
+
+  it('accepts --quiet on analyze and watch', async () => {
+    for (const sub of ['analyze', 'watch'] as const) {
+      const argv = await buildSpec().parseAsync([sub, '--quiet']);
+      expect(argv.quiet).toBe(true);
+    }
+  });
+
+  it('exposes the global flags on every read/decision subcommand', async () => {
+    for (const sub of ['status', 'history'] as const) {
+      const argv = await buildSpec().parseAsync([
+        sub,
+        '--project',
+        '/tmp/proj',
+        '--output',
+        'json',
+        '--quiet',
+      ]);
+      expect(argv.project).toBe('/tmp/proj');
+      expect(argv.output).toBe('json');
+      expect(argv.quiet).toBe(true);
+    }
+    const decide = await buildSpec().parseAsync([
+      'accept',
+      'prop-42',
+      '--project',
+      '/tmp/proj',
+      '--output',
+      'json',
+    ]);
+    expect(decide.id).toBe('prop-42');
+    expect(decide.project).toBe('/tmp/proj');
+    expect(decide.output).toBe('json');
+  });
+
+  it('registers the eval flags with all three modes', async () => {
+    const argv = await buildSpec().parseAsync([
+      'eval',
+      '--corpus',
+      '/tmp/corpus',
+      '--mode',
+      'full',
+      '--live',
+    ]);
+    expect(argv._[0]).toBe('eval');
+    expect(argv.corpus).toBe('/tmp/corpus');
+    expect(argv.mode).toBe('full');
+    expect(argv.live).toBe(true);
+
+    const defaults = await buildSpec().parseAsync(['eval']);
+    expect(defaults.mode).toBe('all');
+    expect(defaults.live).toBe(false);
+    // yargs rejects unknown choices (defer the call so a sync throw becomes
+    // the rejection .rejects expects)
+    await expect(
+      Promise.resolve().then(() => buildSpec().parseAsync(['eval', '--mode', 'sideways'])),
+    ).rejects.toThrow(/Invalid values/);
   });
 });

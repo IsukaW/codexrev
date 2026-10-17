@@ -46,6 +46,7 @@ import type {
 } from '../pipeline/types.js';
 import type { AnalysisOutcome } from '../pipeline/analysisRunner.js';
 import { LivingSpecConfigError } from '../tools/errors.js';
+import { renderInferenceFailure } from './reportRenderer.js';
 import {
   appendDriftAlerts,
   readConfig,
@@ -75,7 +76,18 @@ export interface AnalysisPassOptions {
   readonly timeoutMs?: number;
   /** Compute everything but persist nothing. */
   readonly dryRun?: boolean;
+  /**
+   * Skip the semantic half entirely (no model calls). Implied by `--dry-run`:
+   * a dry run is deterministic-only, which makes "start the model server or
+   * run with --dry-run" an honest failure-path hint.
+   */
+  readonly deterministicOnly?: boolean;
+  /** Progress hook: fires as each pipeline stage begins (watch session UI). */
+  readonly onStage?: (stage: AnalysisStage) => void;
 }
+
+/** Pipeline stages of the pass's back half, in execution order. */
+export type AnalysisStage = 'infer' | 'compare' | 'proposal' | 'outputs' | 'persist';
 
 export interface AnalysisPassResult {
   /** The report JSON — every contract field populated (or explicitly null). */
@@ -112,13 +124,15 @@ export async function runAnalysisPass(
 ): Promise<AnalysisPassResult> {
   const cfg = await readConfig(projectRoot);
   const dryRun = options.dryRun === true;
+  const stage = options.onStage ?? ((): void => undefined);
 
   // ── Semantic back half (optional LLM): requirement implications ─────
   let result: SpecAnalysisResult = outcome.result;
   let label: ImplicationsLabelFile | null = null;
   let llm: LLMPort | undefined;
 
-  if (shouldRunInference(cfg.modelOverride, options)) {
+  if (!options.deterministicOnly && shouldRunInference(cfg.modelOverride, options)) {
+    stage('infer');
     const target = resolveInferenceTarget({
       provider: options.provider,
       model: options.model,
@@ -153,11 +167,14 @@ export async function runAnalysisPass(
       result = applyInferenceToResult(outcome.result, inferenceResult);
     } else {
       // Failure policy (NFR4/NFR5): leave the prior deterministic result
-      // untouched and surface a structured error instead.
+      // untouched and surface a structured error + an actionable hint.
       result = { ...outcome.result, inferenceError: inferenceResult.error };
-      console.warn(
-        `  ⚠ implication inference failed (${inferenceResult.error.code}): ${inferenceResult.error.message}`,
-      );
+      for (const line of renderInferenceFailure(
+        inferenceResult.error.code,
+        inferenceResult.error.message,
+      )) {
+        console.warn(line);
+      }
     }
     label = buildImplicationsLabel({
       changeId: outcome.changeId,
@@ -169,8 +186,10 @@ export async function runAnalysisPass(
   }
 
   // ── Deterministic drift + scoped proposals ──────────────────────────
+  stage('compare');
   const ursDoc = (await readUrsDocument(projectRoot)) ?? EMPTY_URS;
   const drift = compareDrift(result.implications, ursDoc);
+  stage('proposal');
   const proposals = generateProposals({
     implications: result.implications,
     drift,
@@ -180,6 +199,7 @@ export async function runAnalysisPass(
   });
 
   // ── Output side: test deltas, drift alerts, change-impact summary ───
+  stage('outputs');
   const synthesis = await synthesizeTestDeltas({
     implications: result.implications,
     drift,
@@ -221,6 +241,7 @@ export async function runAnalysisPass(
   let reportFile: string | null = null;
   let labelFile: string | null = null;
   if (!dryRun) {
+    stage('persist');
     for (const p of proposals) await saveProposal(projectRoot, p);
     await appendDriftAlerts(projectRoot, driftAlerts);
     reportFile = await saveReport(projectRoot, result);

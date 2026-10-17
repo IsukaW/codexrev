@@ -10,12 +10,18 @@
 
 import path from 'node:path';
 import { runDeterministicAnalysis } from '../pipeline/analysisRunner.js';
-import type { LLMPort } from '../pipeline/llmPort.js';
+import {
+  createLLMPort,
+  DEFAULT_INFERENCE_TIMEOUT_MS,
+  isNetworkProvider,
+  resolveInferenceTarget,
+  type LLMPort,
+} from '../pipeline/llmPort.js';
 import { seedUrsDocument } from '../pipeline/ursModel.js';
 import { validatePatch } from '../pipeline/ursPatcher.js';
 import { acceptPatch, listVersionSnapshots, recordVersion } from '../pipeline/versionStore.js';
 import type { SpecProposal, SpecProposalStatus } from '../pipeline/types.js';
-import { LivingSpecError, LivingSpecProposalError } from '../tools/errors.js';
+import { LivingSpecConfigError, LivingSpecError, LivingSpecProposalError } from '../tools/errors.js';
 import {
   ensureStateDir,
   listProposalIds,
@@ -31,12 +37,29 @@ import {
 } from '../tools/stateStore.js';
 import {
   printAnalysisJson,
-  printAnalysisSummary,
   printOutputSideSummary,
+  printAnalysisSummary,
   printTruncationWarning,
 } from './specOutput.js';
+import {
+  renderDecisionResult,
+  renderDriftLine,
+  renderHistoryReport,
+  renderImplicationsSection,
+  renderSpecUsage,
+  renderStatusReport,
+} from './reportRenderer.js';
+import { renderSpecHelp } from './specHelp.js';
 import { runAnalysisPass } from './analysisPass.js';
 import { runWatchSession } from './runWatchSession.js';
+import { loadEvalScenarios } from '../testing/evalScenario.js';
+import {
+  EVAL_MODES,
+  renderEvalMarkdown,
+  runEvaluation,
+  saveEvalReport,
+  type EvalMode,
+} from '../testing/evaluationHarness.js';
 
 export interface SpecCommandFlags {
   diff?: string;
@@ -53,6 +76,14 @@ export interface SpecCommandFlags {
   offline?: boolean;
   /** Per-request inference timeout (ms). */
   timeout?: number;
+  /** Suppress progress output (analyze/watch). */
+  quiet?: boolean;
+  /** `eval`: scenario corpus directory. */
+  corpus?: string;
+  /** `eval`: comparison mode (batch | single-pass | full | all). */
+  mode?: string;
+  /** `eval`: run against a live local model instead of the offline default. */
+  live?: boolean;
 }
 
 const STATUS_ALERT_LIMIT = 5;
@@ -71,6 +102,8 @@ export async function handleSpecCommand(
   switch (sub) {
     case 'analyze':
       return analyzeCommand(flags, deps);
+    case 'eval':
+      return evalCommand(flags, deps);
     case 'init-urs':
       return initUrsCommand(flags);
     case 'watch':
@@ -83,13 +116,17 @@ export async function handleSpecCommand(
     case 'reject':
     case 'defer':
       return decideCommand(sub, rest[1], flags);
+    case 'help':
+      // full hand-rolled help screen — stdout, exit 0
+      renderSpecHelp(rest[1] === undefined ? undefined : String(rest[1]));
+      return;
     case '':
-      printSpecUsage();
+      console.error(renderSpecUsage());
       process.exitCode = 2;
       return;
     default:
       console.error(`Unknown spec subcommand: ${sub}`);
-      printSpecUsage();
+      console.error(renderSpecUsage());
       process.exitCode = 2;
   }
 }
@@ -116,6 +153,7 @@ async function analyzeCommand(flags: SpecCommandFlags, deps?: SpecCommandDeps): 
 
     // Full pipeline back half: implications → drift → proposals → test deltas,
     // drift alerts and the change-impact summary (all persisted with the report).
+    // --dry-run is deterministic-only: no model calls, nothing written.
     const pass = await runAnalysisPass(root, outcome, {
       ...(deps?.llm ? { llm: deps.llm } : {}),
       ...(flags.provider !== undefined ? { provider: flags.provider } : {}),
@@ -123,19 +161,20 @@ async function analyzeCommand(flags: SpecCommandFlags, deps?: SpecCommandDeps): 
       ...(flags.offline !== undefined ? { offline: flags.offline } : {}),
       ...(flags.timeout !== undefined ? { timeoutMs: flags.timeout } : {}),
       ...(flags.dryRun !== undefined ? { dryRun: flags.dryRun } : {}),
+      ...(flags.dryRun ? { deterministicOnly: true } : {}),
     });
     const result = pass.result;
 
     if ((flags.output ?? 'text') === 'json') {
       if (outcome.extraction.truncated) printTruncationWarning(outcome.extraction);
       printAnalysisJson(result);
-    } else {
+    } else if (!flags.quiet) {
       printAnalysisSummary(outcome, { root, reportFile: pass.reportFile });
       if (pass.label) {
         console.log(
-          `  implications:    ${result.implications.length} (model ${pass.label.model}, ${
-            pass.label.ok ? 'ok' : `failed: ${pass.label.error?.code ?? 'error'}`
-          })`,
+          `  ${pass.label.ok ? 'model' : 'model failed'}:    ${pass.label.model}${
+            pass.label.ok ? '' : ` (${pass.label.error?.code ?? 'error'})`
+          }`,
         );
         if (result.behaviourChangeSummary) {
           console.log(`  behaviour:       ${result.behaviourChangeSummary}`);
@@ -145,11 +184,104 @@ async function analyzeCommand(flags: SpecCommandFlags, deps?: SpecCommandDeps): 
         }
         if (pass.labelFile) console.log(`  labelled output: ${pass.labelFile}`);
       }
-      console.log(`  drift:           ${result.driftStatus}`);
-      if (result.proposalIds && result.proposalIds.length > 0) {
-        console.log(`  proposals:       ${result.proposalIds.join(', ')} (pending — accept/reject/defer)`);
-      }
+      for (const line of renderImplicationsSection(result.implications)) console.log(line);
+      console.log(renderDriftLine(result));
       printOutputSideSummary(pass);
+    }
+  } catch (err) {
+    handleExpectedError(err);
+  }
+}
+
+/**
+ * `codexrev spec eval` — the controlled-evaluation entry point (research
+ * methodology). Replays the labelled scenario corpus through the comparison
+ * modes and writes `reports/eval-<timestamp>.json` + a Markdown summary.
+ * Evaluation-only: the baseline modes live in the harness, not in the CLI
+ * surface — the command itself has exactly one job.
+ */
+async function evalCommand(flags: SpecCommandFlags, deps?: SpecCommandDeps): Promise<void> {
+  try {
+    const root = resolveProject(flags);
+    await ensureStateDir(root);
+
+    const rawMode = flags.mode ?? 'all';
+    let modes: readonly EvalMode[];
+    // research naming (docs/cli/commands.md): A = manual/batch, B = single-pass
+    // without prior-URS comparison, C = full pipeline; `live` runs the whole
+    // corpus against a real local model instead of the offline label echo.
+    let wantLive = flags.live === true;
+    switch (rawMode) {
+      case 'all':
+        modes = EVAL_MODES;
+        break;
+      case 'A':
+      case 'batch':
+        modes = ['batch'];
+        break;
+      case 'B':
+      case 'single-pass':
+        modes = ['single-pass'];
+        break;
+      case 'C':
+      case 'full':
+        modes = ['full'];
+        break;
+      case 'live':
+        modes = EVAL_MODES;
+        wantLive = true;
+        break;
+      default:
+        // bad flag value = bad usage (exit 2), not a runtime error
+        console.error(
+          `invalid --mode "${rawMode}" — expected one of: A, B, C, ${EVAL_MODES.join(', ')}, live (or all)`,
+        );
+        process.exitCode = 2;
+        return;
+    }
+
+    const corpusDir = flags.corpus
+      ? path.resolve(flags.corpus)
+      : path.join(root, 'tests', 'features', 'living-spec', 'fixtures', 'scenarios');
+    const scenarios = await loadEvalScenarios(corpusDir);
+
+    // Offline default: the deterministic label-echo provider (no network).
+    // `--mode live` / --live (or an injected llm) swaps in a real local model
+    // for the two model-backed modes; batch stays deterministic by definition.
+    let live: { llm: LLMPort; model: string } | undefined;
+    if (wantLive || deps?.llm) {
+      const target = resolveInferenceTarget({
+        ...(flags.provider !== undefined ? { provider: flags.provider } : {}),
+        ...(flags.model !== undefined ? { model: flags.model } : {}),
+      });
+      if (flags.offline && deps?.llm === undefined && isNetworkProvider(target.provider)) {
+        throw new LivingSpecConfigError(
+          `--offline forbids the network provider "${target.provider}"; ` +
+            'use a local provider (ollama, lmstudio, litellm).',
+        );
+      }
+      const timeoutMs = flags.timeout ?? DEFAULT_INFERENCE_TIMEOUT_MS;
+      const llm =
+        deps?.llm ??
+        createLLMPort({ provider: target.provider, model: target.model, timeoutMs });
+      live = { llm, model: flags.model ?? deps?.llm?.model ?? target.model };
+    }
+
+    const report = await runEvaluation({
+      scenarios,
+      corpusDir,
+      modes,
+      ...(live ? { live } : {}),
+      ...(flags.timeout !== undefined ? { timeoutMs: flags.timeout } : {}),
+    });
+    const saved = await saveEvalReport(root, report);
+
+    if ((flags.output ?? 'text') === 'json') {
+      console.log(JSON.stringify(report, null, 2));
+    } else {
+      if (!flags.quiet) console.log(renderEvalMarkdown(report));
+      console.log(`\n  report written: ${saved.jsonPath}`);
+      console.log(`  summary:        ${saved.mdPath}`);
     }
   } catch (err) {
     handleExpectedError(err);
@@ -198,6 +330,7 @@ async function watchCommand(flags: SpecCommandFlags, deps?: SpecCommandDeps): Pr
       ...(flags.offline !== undefined ? { offline: flags.offline } : {}),
       ...(flags.timeout !== undefined ? { timeoutMs: flags.timeout } : {}),
       output: flags.output ?? 'text',
+      ...(flags.quiet !== undefined ? { quiet: flags.quiet } : {}),
     });
   } catch (err) {
     handleExpectedError(err);
@@ -220,31 +353,42 @@ async function statusCommand(flags: SpecCommandFlags): Promise<void> {
     }
     // Latest drift alerts from the append-only log (bounded list).
     const allAlerts = await readDriftAlerts(root);
-    const alerts = allAlerts.slice(-STATUS_ALERT_LIMIT);
 
-    console.log(`Living Specification Engine — status (${root})`);
-    console.log(`  state dir:         ${livingSpecDir(root)}`);
-    console.log(`  watched paths:     ${cfg.watchedPaths.join(', ')}`);
-    console.log(`  debounce:          ${cfg.debounceMs} ms`);
-    console.log(`  model override:    ${cfg.modelOverride ?? '(settings default)'}`);
-    console.log(
-      `  URS version:       ${state ? `v${state.version} (updated ${state.updatedAt})` : 'none yet'}`,
-    );
-    console.log(
-      `  open proposals:    ${open.length > 0 ? '' : '(none)'}`,
-    );
-    for (const p of open) {
-      const drift = p.driftStatus ? ` [${p.driftStatus}]` : '';
-      const sections = p.sectionsTouched?.length ? ` → ${p.sectionsTouched.join(', ')}` : '';
-      console.log(`    ${p.id}  ${p.status}${drift}  ${p.title}${sections}`);
-    }
-    console.log(
-      `  drift alerts:      ${allAlerts.length > 0 ? `${allAlerts.length} recorded (latest ${alerts.length})` : '(none)'}`,
-    );
-    for (const alert of alerts) {
+    if ((flags.output ?? 'text') === 'json') {
       console.log(
-        `    ${alert.timestamp}  ${alert.severity.padEnd(8)}  ${alert.file} — ${alert.reason}`,
+        JSON.stringify(
+          {
+            projectRoot: root,
+            stateDir: livingSpecDir(root),
+            watchedPaths: cfg.watchedPaths,
+            debounceMs: cfg.debounceMs,
+            modelOverride: cfg.modelOverride ?? null,
+            ursVersion: state?.version ?? null,
+            ursUpdatedAt: state?.updatedAt ?? null,
+            openProposals: open,
+            driftAlerts: allAlerts.slice(-STATUS_ALERT_LIMIT),
+            driftAlertsTotal: allAlerts.length,
+          },
+          null,
+          2,
+        ),
       );
+      return;
+    }
+
+    for (const line of renderStatusReport({
+      root,
+      stateDir: livingSpecDir(root),
+      watchedPaths: cfg.watchedPaths,
+      debounceMs: cfg.debounceMs,
+      modelOverride: cfg.modelOverride ?? null,
+      ursVersion: state ? `v${state.version} (updated ${state.updatedAt})` : 'none yet',
+      openProposals: open,
+      alerts: allAlerts,
+      alertsTotal: allAlerts.length,
+      alertLimit: STATUS_ALERT_LIMIT,
+    })) {
+      console.log(line);
     }
   } catch (err) {
     handleExpectedError(err);
@@ -256,14 +400,11 @@ async function historyCommand(flags: SpecCommandFlags): Promise<void> {
     const root = resolveProject(flags);
     await ensureStateDir(root);
     const snapshots = await listVersionSnapshots(root);
-    if (snapshots.length === 0) {
-      console.log('No URS versions recorded yet.');
+    if ((flags.output ?? 'text') === 'json') {
+      console.log(JSON.stringify(snapshots, null, 2));
       return;
     }
-    console.log('URS versions:');
-    for (const v of snapshots) {
-      console.log(`  v${v.version}  ${v.action.padEnd(6)}  change ${v.changeId}  ${v.timestamp}`);
-    }
+    for (const line of renderHistoryReport(snapshots)) console.log(line);
   } catch (err) {
     handleExpectedError(err);
   }
@@ -310,17 +451,50 @@ async function decideCommand(
           timestamp: new Date().toISOString(),
           patch: proposal.patch,
         });
-        console.log(`✓ proposal ${id} accepted — URS updated to v${version}`);
-      } else {
-        console.log(`✓ proposal ${id} accepted (no patch to apply)`);
+        await saveProposal(root, { ...proposal, status });
+        emitDecision(decision, { ...proposal, status }, flags, version);
+        return;
       }
-    } else {
-      console.log(`✓ proposal ${id} ${status}`);
+      await saveProposal(root, { ...proposal, status });
+      emitDecision(decision, { ...proposal, status }, flags);
+      return;
     }
 
     await saveProposal(root, { ...proposal, status });
+    emitDecision(decision, { ...proposal, status }, flags);
   } catch (err) {
     handleExpectedError(err);
+  }
+}
+
+/** Prints (or JSON-prints) one resolved decision. */
+function emitDecision(
+  decision: 'accept' | 'reject' | 'defer',
+  proposal: SpecProposal,
+  flags: SpecCommandFlags,
+  version?: number,
+): void {
+  if ((flags.output ?? 'text') === 'json') {
+    console.log(
+      JSON.stringify(
+        {
+          decision,
+          proposalId: proposal.id,
+          status: proposal.status,
+          ...(version !== undefined ? { ursVersion: version } : {}),
+        },
+        null,
+        2,
+      ),
+    );
+    return;
+  }
+  for (const line of renderDecisionResult({
+    decision,
+    proposal,
+    ...(version !== undefined ? { version } : {}),
+  })) {
+    console.log(line);
   }
 }
 
@@ -332,13 +506,4 @@ function handleExpectedError(err: unknown): void {
     return;
   }
   throw err;
-}
-
-function printSpecUsage(): void {
-  console.error('usage: codexrev spec <subcommand> [flags]');
-  console.error('  init-urs [--project <path>]');
-  console.error('  analyze [--diff <ref>] [--project <path>] [--output json|text] [--dry-run]');
-  console.error('  watch   [--debounce <ms>] [--paths <globs>] [--output json|text] [--dry-run]');
-  console.error('  status | history');
-  console.error('  accept <id> | reject <id> | defer <id>');
 }
