@@ -13,6 +13,9 @@ codexrev models add                   # Interactive wizard to add provider + mod
 codexrev extensions list              # List installed extensions
 codexrev extensions install <dir>     # Install from a local directory
 codexrev extensions uninstall <name>  # Remove an installed extension
+codexrev spec status                  # Living URS status (version, proposals, drift)
+codexrev spec analyze                 # Analyze a diff (in development)
+codexrev spec watch                   # Foreground watch session (in development)
 ```
 
 If `prompt` is omitted and no subcommand is given, Codexrev launches the interactive TUI.
@@ -165,6 +168,30 @@ codexrev models remove model gpt-4o --provider openai-prod
 | Flag | Required | Description |
 | --- | --- | --- |
 | `--provider` | yes | Provider name the model belongs to |
+
+### `codexrev spec`
+
+Living Specification Engine (Feature 1) — watches/analyzes source-code changes and incrementally maintains a "living URS" with drift alerts and test-case deltas. State lives in `<target-project>/.codexrev/living-spec/`. See [Living Specification Engine](../living-spec.md) for the state layout and the stable analysis contract.
+
+> **Status:** scaffold. `analyze` and `watch` are **in development** — they accept their flags, print a placeholder, and exit `0`. `status`, `history`, `accept`, `reject` and `defer` already operate on the state store.
+
+```bash
+codexrev spec status                  # URS version, pending proposals, last drift alerts
+codexrev spec history                 # URS versions with their trigger change ids
+codexrev spec accept prop-17          # act on a pending URS proposal
+codexrev spec analyze --diff HEAD~1   # in development
+codexrev spec watch --debounce 800    # in development
+```
+
+| Subcommand | Flags | Description |
+| --- | --- | --- |
+| `analyze` | `--diff <ref>` (default `staged`), `--project <path>`, `--output json\|text`, `--dry-run` | One-shot analysis of a diff *(in development)* |
+| `watch` | `--debounce <ms>` (default `800`), `--paths <globs>`, `--dry-run` | Foreground watch session, command-triggered only *(in development)* |
+| `status` |  | Show the current URS version, pending proposals and last drift alerts |
+| `history` |  | List URS versions with their trigger change ids |
+| `accept <id>` |  | Accept a pending URS proposal |
+| `reject <id>` |  | Reject a pending URS proposal |
+| `defer <id>` |  | Defer a pending URS proposal |
 
 ## TUI slash commands
 

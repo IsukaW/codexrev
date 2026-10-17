@@ -66,6 +66,7 @@ codexrev --print "summarize the README" --model gpt-4o-mini
 ### Cross-cutting
 - [Sandbox](sandbox.md)
 - [Checkpointing](checkpointing.md)
+- [Living Specification Engine](living-spec.md) — living URS, drift alerts, test-case deltas (Feature 1)
 - [Telemetry](telemetry.md)
 - [Extensions](extensions.md)
 - [MCP server](tools/mcp-server.md)

@@ -12,6 +12,8 @@ export default [
       'coverage/**',
       '*.config.js',
       'scripts/**',
+      // fixture project with intentionally buggy demo code (used by tests)
+      'testProject/**',
     ],
   },
   js.configs.recommended,

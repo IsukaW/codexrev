@@ -26,6 +26,8 @@ import { PROVIDER_IDS, providerMeta } from '../providers/registry.js';
 import { probeLocalProvider, resolveBaseUrlForProvider } from '../providers/health.js';
 import { reviewCommandBuilder } from '../features/review-pipeline/cli/registerReviewCommand.js';
 import { handleReviewCommand } from '../features/review-pipeline/cli/handleReviewCommand.js';
+import { specCommandBuilder } from '../features/living-spec/cli/registerSpecCommand.js';
+import { handleSpecCommand } from '../features/living-spec/cli/handleSpecCommand.js';
 
 interface CliArgs {
   provider?: string;
@@ -161,6 +163,7 @@ async function main(): Promise<void> {
         ),
     )
     .command('review', 'Run the six-role adversarial code review pipeline', reviewCommandBuilder)
+    .command('spec', 'Keep the living URS in sync with source-code changes', specCommandBuilder)
     .option('provider', {
       type: 'string',
       describe: `LLM provider: ${PROVIDER_IDS.join(' | ')}`,
@@ -291,6 +294,20 @@ async function main(): Promise<void> {
       // yargs converts --max-iterations → maxIterations.
       maxIterations: (argv as Record<string, unknown>).maxIterations as number | undefined,
       print: argv.print,
+    });
+    return;
+  }
+
+  if (argv._.includes('spec')) {
+    const rest = argv._.slice(argv._.indexOf('spec') + 1);
+    await handleSpecCommand(rest, {
+      diff: argv.diff as string | undefined,
+      project: (argv as Record<string, unknown>).project as string | undefined,
+      output: (argv as Record<string, unknown>).output as 'json' | 'text' | undefined,
+      dryRun: (argv as Record<string, unknown>).dryRun as boolean | undefined,
+      // yargs converts --debounce/--paths straight through.
+      debounce: (argv as Record<string, unknown>).debounce as number | undefined,
+      paths: (argv as Record<string, unknown>).paths as string | undefined,
     });
     return;
   }

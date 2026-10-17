@@ -76,6 +76,9 @@ export function renderHelp(): void {
   process.stdout.write(
     `  ${green('$')} ${b('codexrev')} ${cyan('review scan')} ${dim('[flags]')}\n`,
   );
+  process.stdout.write(
+    `  ${green('$')} ${b('codexrev')} ${cyan('spec')} ${dim('<analyze|watch|status|history|accept|reject|defer>')}\n`,
+  );
 
   heading('Commands');
   process.stdout.write(
@@ -89,6 +92,9 @@ export function renderHelp(): void {
   );
   process.stdout.write(
     `  ${b(cyan('review'))}          ${'Run the six-role adversarial code review pipeline  '}${dim('(scan)')}\n`,
+  );
+  process.stdout.write(
+    `  ${b(cyan('spec'))}            ${'Keep the living URS in sync with source changes  '}${dim('(analyze, watch, status, history, ...)')}\n`,
   );
 
   const writeRow = (flag: string, arg: string, desc: string): void => {
@@ -219,6 +225,18 @@ export function renderHelp(): void {
     ['--max-iterations', '<n>', 'Override the fix-loop iteration cap (never above 5)'],
   ];
   for (const [flag, arg, desc] of reviewRows) writeRow(flag, arg, desc);
+
+  heading('Spec subcommands (with `codexrev spec ...`)');
+  const specRows: Array<[string, string, string]> = [
+    ['analyze', '[--diff <ref>] [--output json|text]', 'One-shot diff analysis (in development)'],
+    ['watch', '[--debounce <ms>] [--paths <globs>]', 'Foreground watch session (in development)'],
+    ['status', '', 'Show URS version, pending proposals, drift alerts'],
+    ['history', '', 'List URS versions with trigger change ids'],
+    ['accept <id>', '', 'Accept a pending URS proposal'],
+    ['reject <id>', '', 'Reject a pending URS proposal'],
+    ['defer <id>', '', 'Defer a pending URS proposal'],
+  ];
+  for (const [flag, arg, desc] of specRows) writeRow(flag, arg, desc);
 
   heading('Learn more');
   process.stdout.write(
