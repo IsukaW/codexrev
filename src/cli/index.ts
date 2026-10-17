@@ -339,6 +339,7 @@ async function main(): Promise<void> {
       corpus: (argv as Record<string, unknown>).corpus as string | undefined,
       mode: (argv as Record<string, unknown>).mode as string | undefined,
       live: (argv as Record<string, unknown>).live as boolean | undefined,
+      yes: (argv as Record<string, unknown>).yes as boolean | undefined,
     });
     return;
   }

@@ -171,6 +171,19 @@ export function ursStatePath(projectRoot: string): string {
   return path.join(ursDir(projectRoot), 'state.json');
 }
 
+/**
+ * Viewer-friendly PDF of the CURRENT living URS, regenerated alongside
+ * `urs.md` + `urs.json` on every approved version (v0 bootstrap included).
+ */
+export function ursPdfPath(projectRoot: string): string {
+  return path.join(ursDir(projectRoot), 'urs.pdf');
+}
+
+/** PDF twin of one version snapshot: `versions/v<N>.pdf`. */
+export function versionPdfPath(projectRoot: string, version: number): string {
+  return path.join(versionsDir(projectRoot), `v${version}.pdf`);
+}
+
 const SAFE_ID = /^[A-Za-z0-9._-]+$/;
 
 function requireSafeId(id: string, kind: 'proposal' | 'version' | 'report'): string {
@@ -301,17 +314,18 @@ export function ursJsonPath(projectRoot: string): string {
  * Crash-safe write: content goes to a temp file first, then `rename`s over the
  * target. A crash before the rename leaves the previous file fully intact
  * (never a half-written document). `beforeRename` is a test seam used to
- * simulate a crash between the temp write and the commit.
+ * simulate a crash between the temp write and the commit. Accepts strings
+ * (utf-8) and Buffers (e.g. the rendered URS PDF).
  */
 export async function writeFileAtomic(
   target: string,
-  content: string,
+  content: string | Buffer,
   opts?: { beforeRename?: () => void | Promise<void> },
 ): Promise<void> {
   const dir = path.dirname(target);
   await fs.mkdir(dir, { recursive: true });
   const tmp = path.join(dir, `.${path.basename(target)}.${randomBytes(4).toString('hex')}.tmp`);
-  await fs.writeFile(tmp, content, 'utf-8');
+  await fs.writeFile(tmp, content);
   if (opts?.beforeRename) await opts.beforeRename();
   await fs.rename(tmp, target);
 }

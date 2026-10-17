@@ -29,6 +29,7 @@ const NO_COLOR_PALETTE = {
 
 export const SPEC_SUBCOMMANDS = [
   'analyze',
+  'bootstrap',
   'watch',
   'eval',
   'status',
@@ -87,11 +88,12 @@ export function renderSpecHelp(sub: string | undefined, write: Writer = defaultW
 
   heading('Usage');
   write(`  ${green('$')} ${b('codexrev spec')} ${cyan('<subcommand>')} ${dim('[flags]')}\n`);
-  write(`  ${green('$')} ${b('codexrev spec')} ${cyan('help')} ${dim('[analyze|watch|eval|status|history|accept|reject|defer]')}\n`);
+  write(`  ${green('$')} ${b('codexrev spec')} ${cyan('help')} ${dim('[analyze|bootstrap|watch|eval|status|history|accept|reject|defer]')}\n`);
 
   heading('Subcommands');
   const subcommandRows: Array<[string, string]> = [
     ['analyze', 'Analyze a diff once: implications, drift, proposals, test deltas'],
+    ['bootstrap', 'Generate URS Version 0 from implemented code (approval required)'],
     ['watch', 'Foreground watch session over saves (Ctrl+C to stop — never a daemon)'],
     ['eval', 'Replay the labelled scenario corpus → evaluation report (research)'],
     ['status', 'URS version, open proposals, latest drift alerts'],
@@ -115,6 +117,13 @@ export function renderSpecHelp(sub: string | undefined, write: Writer = defaultW
   writeRow('--model', '<name>', 'Inference model override (e.g. qwen2.5-coder)');
   writeRow('--offline', '', 'Assert a local provider is used (no public network)');
   writeRow('--timeout', '<ms>', 'Per-request inference timeout (default: 120000)');
+
+  heading('bootstrap flags');
+  writeRow('--dry-run', '', 'Preview the generated URS without asking to save');
+  writeRow('--yes', '', 'Approve the draft as URS Version 0 non-interactively (required off-TTY)');
+  writeRow('--provider', '<name>', 'Inference provider override (default: local)');
+  writeRow('--model', '<name>', 'Inference model override');
+  writeRow('--offline', '', 'Assert a local provider is used (no public network)');
 
   heading('watch flags');
   writeRow('--debounce', '<ms>', 'Quiet period per change batch (default: 800)');
@@ -153,6 +162,16 @@ function subcommandDetails(sub: SpecSubcommand): string[] {
         'Extracts the diff, infers requirement implications (when a model is configured),',
         'compares them with the living URS, proposes scoped updates (pending until accepted)',
         'and writes reports/<changeId>.json. --dry-run runs the deterministic half only.',
+      ];
+    case 'bootstrap':
+      return [
+        'For projects WITHOUT a living URS: scans the implemented code (controllers,',
+        'services, handlers and other business-logic homes first), asks the model to derive',
+        'requirement sections with source references, and shows the draft for approval.',
+        'On yes (interactive [y/N] on a TTY, or --yes for scripts — required off-TTY) it is',
+        'saved as URS Version 0 in BOTH formats: urs/urs.json (+ .md) and urs/urs.pdf, plus',
+        'the versions/v0 snapshot pair. --dry-run previews without saving; an existing URS',
+        'is never overwritten (use spec analyze + accept to evolve it).',
       ];
     case 'watch':
       return [

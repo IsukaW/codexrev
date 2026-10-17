@@ -62,3 +62,11 @@ export class LivingSpecEvalError extends LivingSpecError {
     this.name = 'LivingSpecEvalError';
   }
 }
+
+/** Bootstrap scan/model/approval failure when generating a URS from code. */
+export class LivingSpecBootstrapError extends LivingSpecError {
+  constructor(message: string) {
+    super(message, 'CODEXREV_LIVING_SPEC_BOOTSTRAP');
+    this.name = 'LivingSpecBootstrapError';
+  }
+}

@@ -302,7 +302,7 @@ export interface UrsProposal extends SpecProposal {
 
 // ── Versioned URS history (Feature 2) ─────────────────────────────────
 
-export type UrsVersionAction = 'seed' | 'accept';
+export type UrsVersionAction = 'seed' | 'accept' | 'bootstrap';
 
 /**
  * Append-only snapshot recorded under `versions/` for each accepted update:

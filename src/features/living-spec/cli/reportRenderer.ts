@@ -18,6 +18,7 @@ import type {
   SpecImplication,
   SpecProposal,
   SpecTestCaseDelta,
+  UrsDocument,
   UrsVersionSnapshot,
 } from '../pipeline/types.js';
 
@@ -329,13 +330,81 @@ export function renderDecisionResult(params: {
 export function renderSpecUsage(): string {
   return [
     'usage: codexrev spec <subcommand> [flags]',
+    '  bootstrap [--yes] [--dry-run] [--project <path>] [--output json|text]',
     '  analyze [--diff <ref>] [--project <path>] [--output json|text] [--dry-run] [--quiet]',
     '  watch   [--debounce <ms>] [--paths <globs>] [--output json|text] [--dry-run] [--quiet]',
     '  eval    [--corpus <dir>] [--mode A|B|C|batch|single-pass|full|live|all] [--live]',
     '  status  [--project <path>] [--output json|text]',
     '  history [--project <path>] [--output json|text]',
     '  accept <id> | reject <id> | defer <id>   [--project <path>] [--output json|text]',
-    '  help [analyze|watch|status|history|accept|reject|defer]',
+    '  help [analyze|watch|eval|status|history|accept|reject|defer]',
     'Run `codexrev spec help` for the full flag reference.',
   ].join('\n');
+}
+
+// ── URS bootstrap (Version 0 from existing code) ──────────────────────
+
+export interface BootstrapPreviewInput {
+  readonly root: string;
+  readonly scanSummary: string;
+  /** Model overview of the system. */
+  readonly summary: string;
+  readonly doc: UrsDocument;
+  readonly droppedSections: readonly string[];
+  readonly droppedRefs: number;
+}
+
+/** Draft preview shown BEFORE the user approves the URS as Version 0. */
+export function renderBootstrapPreview(input: BootstrapPreviewInput): readonly string[] {
+  const c = palette();
+  const { doc } = input;
+  const lines = [
+    `${c.bold}Living Specification Engine — URS bootstrap${c.reset} ${c.dim}(draft Version 0 — not yet saved)${c.reset}`,
+    `  project:    ${input.root}`,
+    `  scan:       ${input.scanSummary}`,
+    `  summary:    ${truncate(input.summary, 160)}`,
+    `  sections:   ${doc.sections.length}`,
+    `    ${'TYPE'.padEnd(11)} ${'ID'.padEnd(22)} ${'REFS'.padEnd(5)} TITLE`,
+  ];
+  let refCount = 0;
+  for (const s of doc.sections) {
+    refCount += s.sourceRefs.length;
+    lines.push(
+      `    ${s.type.padEnd(11)} ${s.id.padEnd(22)} ${String(s.sourceRefs.length).padEnd(5)} ${truncate(s.title, 60)}`,
+    );
+  }
+  lines.push(`  referenced: ${refCount} source reference(s) into the scanned code`);
+  if (input.droppedRefs > 0 || input.droppedSections.length > 0) {
+    lines.push(
+      `  ${c.yellow}sanitised:${c.reset} ${input.droppedRefs} unresolvable reference(s) dropped` +
+        (input.droppedSections.length > 0
+          ? `, ${input.droppedSections.length} section(s) dropped for having none (${input.droppedSections.join(', ')})`
+          : ''),
+    );
+  }
+  return lines;
+}
+
+export interface BootstrapApprovedInput {
+  readonly root: string;
+  readonly version: number;
+  readonly jsonPath: string;
+  readonly markdownPath: string;
+  readonly pdfPath: string;
+  readonly versionJsonPath: string;
+  readonly versionPdfPath: string;
+}
+
+/** Success screen after the user approves the draft (dual-format write). */
+export function renderBootstrapApproved(input: BootstrapApprovedInput): readonly string[] {
+  const c = palette();
+  return [
+    `${c.green}✓${c.reset} URS Version ${input.version} approved and written ${c.dim}(bootstrap)${c.reset}`,
+    `  urs.json:  ${input.jsonPath}`,
+    `  urs.md:    ${input.markdownPath}`,
+    `  urs.pdf:   ${input.pdfPath}`,
+    `  snapshot:  ${input.versionJsonPath}`,
+    `             ${input.versionPdfPath}`,
+    `  next:      run \`codexrev spec analyze\` to keep the URS in sync with changes`,
+  ];
 }

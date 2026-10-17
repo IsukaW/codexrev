@@ -5,6 +5,7 @@ import { specCommandBuilder } from '../../../src/features/living-spec/cli/regist
 
 const SUBCOMMANDS = [
   'analyze',
+  'bootstrap',
   'watch',
   'eval',
   'status',
@@ -26,7 +27,7 @@ function buildSpec(): Argv<Record<string, unknown>> & CommandAwareArgv {
 }
 
 describe('specCommandBuilder', () => {
-  it('exposes all seven subcommands', async () => {
+  it('exposes every subcommand', async () => {
     const help = await buildSpec().getHelp();
     for (const sub of SUBCOMMANDS) {
       expect(help).toContain(`codexrev ${sub}`);
@@ -158,5 +159,17 @@ describe('specCommandBuilder', () => {
     await expect(
       Promise.resolve().then(() => buildSpec().parseAsync(['eval', '--mode', 'sideways'])),
     ).rejects.toThrow(/Invalid values/);
+  });
+
+  it('registers bootstrap with its approval and preview flags', async () => {
+    const argv = await buildSpec().parseAsync(['bootstrap', '--yes', '--dry-run', '--model', 'm']);
+    expect(argv._[0]).toBe('bootstrap');
+    expect(argv.yes).toBe(true);
+    expect(argv.dryRun).toBe(true);
+    expect(argv.model).toBe('m');
+
+    const defaults = await buildSpec().parseAsync(['bootstrap']);
+    expect(defaults.yes).toBe(false);
+    expect(defaults.dryRun).toBe(false);
   });
 });

@@ -229,6 +229,7 @@ export function renderHelp(): void {
   heading('Spec subcommands (with `codexrev spec ...`)');
   const specRows: Array<[string, string, string]> = [
     ['analyze', '[--diff <ref>] [--dry-run]', 'One-shot diff analysis → report JSON'],
+    ['bootstrap', '[--yes] [--dry-run]', 'Generate URS Version 0 from implemented code'],
     ['watch', '[--debounce <ms>] [--paths <globs>]', 'Foreground watch session (live TUI on a TTY)'],
     ['eval', '[--corpus <dir>] [--mode <mode>]', 'Replay the labelled corpus → evaluation report'],
     ['status', '', 'Show URS version, pending proposals, drift alerts'],

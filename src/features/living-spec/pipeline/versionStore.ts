@@ -20,9 +20,12 @@ import type {
 } from './types.js';
 import { applyPatch } from './ursPatcher.js';
 import { renderUrsMarkdown, seedUrsDocument } from './ursModel.js';
+import { renderUrsPdf } from '../tools/pdfRenderer.js';
 import {
   readUrsDocument,
   readUrsState,
+  ursPdfPath,
+  versionPdfPath,
   versionPath,
   versionsDir,
   writeFileAtomic,
@@ -81,7 +84,15 @@ export async function recordVersion(
   });
   // 2. append-only history snapshot.
   await writeFileAtomic(versionPath(projectRoot, version), JSON.stringify(snapshot, null, 2));
-  // 3. bump the monotonic version counter.
+  // 3. viewer-friendly PDF twins (current URS + this version) — same dual
+  //    format for every approved version: `urs/urs.pdf` + `versions/v<N>.pdf`
+  const pdf = renderUrsPdf(params.doc, {
+    title: params.doc.title,
+    subtitle: `Version ${version} · ${params.action} · ${params.timestamp}`,
+  });
+  await writeFileAtomic(ursPdfPath(projectRoot), pdf);
+  await writeFileAtomic(versionPdfPath(projectRoot, version), pdf);
+  // 4. bump the monotonic version counter.
   await writeUrsState(projectRoot, {
     schemaVersion: 1,
     version,

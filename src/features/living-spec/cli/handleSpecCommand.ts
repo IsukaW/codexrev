@@ -9,6 +9,7 @@
  */
 
 import path from 'node:path';
+import readline from 'node:readline/promises';
 import { runDeterministicAnalysis } from '../pipeline/analysisRunner.js';
 import {
   createLLMPort,
@@ -17,11 +18,24 @@ import {
   resolveInferenceTarget,
   type LLMPort,
 } from '../pipeline/llmPort.js';
-import { seedUrsDocument } from '../pipeline/ursModel.js';
+import { extractJson, generateWithTimeout } from '../pipeline/inferenceEngine.js';
+import { renderUrsMarkdown, seedUrsDocument } from '../pipeline/ursModel.js';
+import {
+  bootstrapOutputToDocument,
+  buildBootstrapPrompt,
+  collectBootstrapFiles,
+  summarizeScan,
+} from '../pipeline/ursBootstrapper.js';
+import { validateUrsBootstrapOutput } from '../tools/ursBootstrapSchema.js';
 import { validatePatch } from '../pipeline/ursPatcher.js';
 import { acceptPatch, listVersionSnapshots, recordVersion } from '../pipeline/versionStore.js';
 import type { SpecProposal, SpecProposalStatus } from '../pipeline/types.js';
-import { LivingSpecConfigError, LivingSpecError, LivingSpecProposalError } from '../tools/errors.js';
+import {
+  LivingSpecBootstrapError,
+  LivingSpecConfigError,
+  LivingSpecError,
+  LivingSpecProposalError,
+} from '../tools/errors.js';
 import {
   ensureStateDir,
   listProposalIds,
@@ -33,7 +47,11 @@ import {
   readUrsDocument,
   readUrsState,
   saveProposal,
+  ursJsonPath,
   ursMarkdownPath,
+  ursPdfPath,
+  versionPdfPath,
+  versionPath,
 } from '../tools/stateStore.js';
 import {
   printAnalysisJson,
@@ -42,6 +60,8 @@ import {
   printTruncationWarning,
 } from './specOutput.js';
 import {
+  renderBootstrapApproved,
+  renderBootstrapPreview,
   renderDecisionResult,
   renderDriftLine,
   renderHistoryReport,
@@ -84,6 +104,8 @@ export interface SpecCommandFlags {
   mode?: string;
   /** `eval`: run against a live local model instead of the offline default. */
   live?: boolean;
+  /** `bootstrap`: skip the interactive approval (required off-TTY). */
+  yes?: boolean;
 }
 
 const STATUS_ALERT_LIMIT = 5;
@@ -102,6 +124,8 @@ export async function handleSpecCommand(
   switch (sub) {
     case 'analyze':
       return analyzeCommand(flags, deps);
+    case 'bootstrap':
+      return bootstrapCommand(flags, deps);
     case 'eval':
       return evalCommand(flags, deps);
     case 'init-urs':
@@ -187,6 +211,208 @@ async function analyzeCommand(flags: SpecCommandFlags, deps?: SpecCommandDeps): 
       for (const line of renderImplicationsSection(result.implications)) console.log(line);
       console.log(renderDriftLine(result));
       printOutputSideSummary(pass);
+    }
+  } catch (err) {
+    handleExpectedError(err);
+  }
+}
+
+/**
+ * `codexrev spec bootstrap` — generates the INITIAL living URS (Version 0)
+ * from the project's implemented code (controllers/services/handlers first),
+ * shows the draft with its source references, and only writes it after an
+ * explicit approval: interactive `[y/N]` on a TTY, `--yes` for scripts/CI
+ * (required off-TTY, exit 2 otherwise). The approved URS lands in BOTH
+ * formats — `urs/urs.json` (+md) and `urs/urs.pdf` — plus the Version 0
+ * snapshot `versions/v0.json` + `versions/v0.pdf` (NFR7). `--dry-run`
+ * previews without ever asking to save.
+ */
+async function bootstrapCommand(flags: SpecCommandFlags, deps?: SpecCommandDeps): Promise<void> {
+  try {
+    const root = resolveProject(flags);
+    await ensureStateDir(root);
+
+    if (await readUrsDocument(root)) {
+      throw new LivingSpecBootstrapError(
+        `a living URS already exists at ${ursJsonPath(root)} — bootstrap only initialises a ` +
+          'project without one; evolve the existing URS with `codexrev spec analyze` + accept',
+      );
+    }
+
+    const cfg = await readConfig(root);
+    const files = await collectBootstrapFiles(root, { includePaths: cfg.includePaths });
+    if (files.length === 0) {
+      throw new LivingSpecBootstrapError(
+        `no source files matched the include paths under ${root} — ` +
+          'check includePaths in .codexrev/living-spec/config.json',
+      );
+    }
+
+    // Bootstrap is inherently model-backed (reading business logic requires
+    // inference): same target resolution + offline guard as analyze.
+    const target = resolveInferenceTarget({
+      ...(flags.provider !== undefined ? { provider: flags.provider } : {}),
+      ...(flags.model !== undefined ? { model: flags.model } : {}),
+      ...(cfg.modelOverride !== undefined ? { modelOverride: cfg.modelOverride } : {}),
+    });
+    if (flags.offline && isNetworkProvider(target.provider)) {
+      throw new LivingSpecConfigError(
+        `--offline forbids the network provider "${target.provider}"; ` +
+          'use a local provider (ollama, lmstudio, litellm).',
+      );
+    }
+    const timeoutMs = flags.timeout ?? DEFAULT_INFERENCE_TIMEOUT_MS;
+    const llm = deps?.llm ?? createLLMPort({ provider: target.provider, model: target.model, timeoutMs });
+
+    const prompt = buildBootstrapPrompt(files);
+    let response: Awaited<ReturnType<typeof generateWithTimeout>>;
+    try {
+      response = await generateWithTimeout(
+        llm,
+        {
+          model: target.model,
+          systemInstruction: prompt.system,
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: prompt.user }] }],
+          temperature: 0.2,
+        },
+        timeoutMs,
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new LivingSpecBootstrapError(
+        `could not reach the model (${target.provider}/${target.model}): ${message}\n` +
+          '  → start ollama / lm studio (e.g. `ollama serve`) and retry — nothing was written',
+      );
+    }
+
+    let rawPayload: unknown;
+    try {
+      rawPayload = extractJson(
+        response.message.parts
+          .filter((p) => p.kind === 'text')
+          .map((p) => p.text)
+          .join(''),
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new LivingSpecBootstrapError(
+        `the model returned malformed output (NFR5): ${message} — ` +
+          'nothing was written; retry or try a different model',
+      );
+    }
+
+    const validated = validateUrsBootstrapOutput(rawPayload);
+    if (!validated.ok) {
+      throw new LivingSpecBootstrapError(
+        `the model returned an invalid URS payload (NFR5): ${validated.errors.join('; ')} — ` +
+          'nothing was written; retry or try a different model',
+      );
+    }
+    const built = bootstrapOutputToDocument(validated.value, {
+      files,
+      changeId: 'bootstrap',
+    });
+    const markdown = renderUrsMarkdown(built.doc);
+    const scanSummary = summarizeScan(files);
+    const jsonMode = (flags.output ?? 'text') === 'json';
+
+    // ── preview (always shown in text mode — including before approval) ──
+    const previewLines = renderBootstrapPreview({
+      root,
+      scanSummary,
+      summary: built.summary,
+      doc: built.doc,
+      droppedSections: built.droppedSections,
+      droppedRefs: built.droppedRefs,
+    });
+    if (!jsonMode) for (const line of previewLines) console.log(line);
+
+    if (flags.dryRun) {
+      if (jsonMode) {
+        console.log(
+          JSON.stringify(
+            {
+              dryRun: true,
+              approved: false,
+              scan: scanSummary,
+              summary: built.summary,
+              document: built.doc,
+              markdown,
+            },
+            null,
+            2,
+          ),
+        );
+      } else {
+        console.log('');
+        console.log(markdown);
+        console.log('(dry-run) nothing written — re-run without --dry-run to approve and save');
+      }
+      return;
+    }
+
+    // ── approval gate (NFR4) ─────────────────────────────────────────────
+    let approved: boolean;
+    if (flags.yes) {
+      approved = true;
+    } else if (!jsonMode && process.stdin.isTTY === true) {
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      try {
+        const answer = await rl.question('Accept this as URS Version 0? [y/N] ');
+        approved = /^(y|yes)$/i.test(answer.trim());
+      } finally {
+        rl.close();
+      }
+    } else {
+      console.error(
+        'approval required — nothing written: re-run with --yes to accept the generated URS ' +
+          'as Version 0 (interactive approval needs a TTY)',
+      );
+      process.exitCode = 2;
+      return;
+    }
+
+    if (!approved) {
+      console.log('declined — no URS was written');
+      return;
+    }
+
+    const { version } = await recordVersion(root, {
+      changeId: 'bootstrap',
+      action: 'bootstrap',
+      timestamp: new Date().toISOString(),
+      doc: built.doc,
+      markdown,
+      version: 0,
+    });
+    const paths = {
+      jsonPath: ursJsonPath(root),
+      markdownPath: ursMarkdownPath(root),
+      pdfPath: ursPdfPath(root),
+      versionJsonPath: versionPath(root, version),
+      versionPdfPath: versionPdfPath(root, version),
+    };
+
+    if (jsonMode) {
+      console.log(
+        JSON.stringify(
+          {
+            dryRun: false,
+            approved: true,
+            version,
+            scan: scanSummary,
+            summary: built.summary,
+            paths,
+            document: built.doc,
+          },
+          null,
+          2,
+        ),
+      );
+    } else {
+      for (const line of renderBootstrapApproved({ root, version, ...paths })) {
+        console.log(line);
+      }
     }
   } catch (err) {
     handleExpectedError(err);

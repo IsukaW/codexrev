@@ -67,6 +67,36 @@ export function specCommandBuilder<T>(y: Argv<T>): Argv<T> {
           describe: 'Per-request inference timeout in ms (default: 120000)',
         }),
     )
+    .command('bootstrap', 'Generate URS Version 0 from the implemented code (approval required)', (yy) =>
+      withGlobalFlags(yy)
+        .option('dry-run', {
+          type: 'boolean',
+          default: false,
+          describe: 'Preview the generated URS without asking to save',
+        })
+        .option('yes', {
+          type: 'boolean',
+          default: false,
+          describe: 'Approve the draft as URS Version 0 non-interactively (required off-TTY)',
+        })
+        .option('provider', {
+          type: 'string',
+          describe: 'Inference provider override (default: local — ollama/lmstudio)',
+        })
+        .option('model', {
+          type: 'string',
+          describe: 'Inference model override (e.g. a Qwen-family code model)',
+        })
+        .option('offline', {
+          type: 'boolean',
+          default: false,
+          describe: 'Assert no network provider is used for inference',
+        })
+        .option('timeout', {
+          type: 'number',
+          describe: 'Per-request inference timeout in ms (default: 120000)',
+        }),
+    )
     .command('watch', 'Watch source changes and keep the living URS in sync', (yy) =>
       withGlobalFlags(yy)
         .option('debounce', {
