@@ -49,6 +49,20 @@ export interface ChangeEvent {
   readonly hash: string;
 }
 
+/**
+ * What `ChangeBuffer.push` did with an event — lets callers (the watch
+ * session's live view) report dedupe instead of guessing (NFR3).
+ */
+export type PushOutcome =
+  /** Debounced; will be emitted in a future batch (content differs). */
+  | 'scheduled'
+  /** Identical to the pending content — still part of the same quiet period. */
+  | 'unchanged'
+  /** Identical to the last ANALYSED state — dropped, never analysed twice. */
+  | 'deduped'
+  /** The buffer was disposed; the event was ignored. */
+  | 'ignored';
+
 /** A coalesced set of effective changes ready to be analysed. */
 export interface ChangeBatch {
   /** Sorted project-relative paths. */
@@ -120,9 +134,9 @@ export class ChangeBuffer {
     this.onBatch = options.onBatch;
   }
 
-  /** Records a change event; debounces per path and dedupes by hash. */
-  push(event: ChangeEvent): void {
-    if (this.disposed) return;
+  /** Records a change event; debounces per path and dedupes by hash. Returns what happened. */
+  push(event: ChangeEvent): PushOutcome {
+    if (this.disposed) return 'ignored';
     const { path, hash } = event;
 
     if (this.lastEmitted.get(path) === hash) {
@@ -131,12 +145,12 @@ export class ChangeBuffer {
       // already-analysed state: drop that too, the net change is zero.
       this.clearPath(path);
       this.dropped.add(path);
-      return;
+      return 'deduped';
     }
     if (this.pending.get(path) === hash) {
       // unchanged pending content re-saved — the quiet period restarts only
       // when the effective content actually changes
-      return;
+      return 'unchanged';
     }
 
     this.pending.set(path, hash);
@@ -145,6 +159,7 @@ export class ChangeBuffer {
       path,
       this.timers.schedule(() => this.onPathSettled(path), this.debounceMs),
     );
+    return 'scheduled';
   }
 
   /** Paths with un-settled or settled-but-unemitted changes. */
