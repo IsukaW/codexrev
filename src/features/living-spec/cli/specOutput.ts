@@ -1,44 +1,33 @@
 /**
- * Human-facing output for `codexrev spec analyze` / `spec watch`.
- * Kept in the cli/ layer so the pipeline modules stay console-free.
+ * Thin console wrappers around the pure `reportRenderer` for the analyze /
+ * watch text output. Kept in the cli/ layer so the pipeline modules stay
+ * console-free; --output json prints the raw SpecAnalysisResult only.
  */
 
 import type { AnalysisOutcome } from '../pipeline/analysisRunner.js';
 import type { ChangeBatch } from '../pipeline/changeBuffer.js';
-import type { DiffFile, ExtractedDiff } from '../pipeline/diffExtractor.js';
-import { formatDriftAlert } from '../pipeline/driftAlert.js';
-import type {
-  SpecChangeDriftAlert,
-  SpecAnalysisResult,
-  SpecImpactSummary,
-  SpecTestCaseDelta,
-} from '../pipeline/types.js';
+import type { ExtractedDiff } from '../pipeline/diffExtractor.js';
+import type { SpecAnalysisResult } from '../pipeline/types.js';
+import {
+  renderAnalyzeHeader,
+  renderFileLine,
+  renderOutputSideSection,
+  renderTruncationNotice,
+} from './reportRenderer.js';
 
-const MAX_LISTED_FILES = 25;
-const MAX_LISTED_DELTAS = 10;
-const MAX_LISTED_ALERTS = 10;
-
-function delta(added: number, removed: number): string {
-  return `+${added} -${removed}`;
-}
-
-export function formatFileLine(file: DiffFile): string {
-  const name =
-    file.status === 'renamed' && file.oldPath ? `${file.oldPath} → ${file.path}` : file.path;
-  return `  ${delta(file.linesAdded, file.linesRemoved).padEnd(10)} ${file.status.padEnd(8)} ${name}`;
+/** The output side of one analysis: test deltas, drift alerts, impact summary. */
+export interface OutputSideView {
+  readonly testDeltas: SpecAnalysisResult['testDeltas'];
+  readonly driftAlerts: SpecAnalysisResult['driftAlerts'];
+  readonly impactSummary: SpecAnalysisResult['impactSummary'];
+  readonly synthesis: {
+    readonly refined: boolean;
+    readonly refinementError?: { readonly code: string; readonly message: string };
+  };
 }
 
 export function printTruncationWarning(extraction: ExtractedDiff): void {
-  const shown = extraction.omittedPaths.slice(0, 5).join(', ');
-  const more =
-    extraction.omittedPaths.length > 5 ? ` (+${extraction.omittedPaths.length - 5} more)` : '';
-  const omitted =
-    extraction.omittedPaths.length > 0
-      ? `: ${extraction.omittedPaths.length} file(s) omitted${shown ? ` — ${shown}${more}` : ''}`
-      : ': partial file cut at the limit';
-  console.warn(
-    `  ⚠ diff truncated at ${extraction.maxBytes} bytes (${extraction.totalBytes} bytes total)${omitted}`,
-  );
+  console.warn(renderTruncationNotice(extraction));
 }
 
 /** `--output text` summary: files changed, lines added/removed, warnings. */
@@ -46,25 +35,15 @@ export function printAnalysisSummary(
   outcome: AnalysisOutcome,
   opts: { root: string; reportFile: string | null },
 ): void {
-  const { result, extraction } = outcome;
-  const totalAdded = extraction.files.reduce((n, f) => n + f.linesAdded, 0);
-  const totalRemoved = extraction.files.reduce((n, f) => n + f.linesRemoved, 0);
-
-  console.log(`Living Specification Engine — analysis of ${extraction.ref} in ${opts.root}`);
-  console.log(`  change id:  ${result.changeId}`);
-  console.log(
-    `  ${extraction.files.length} file(s) changed: ${delta(totalAdded, totalRemoved)}`,
-  );
-  for (const file of extraction.files.slice(0, MAX_LISTED_FILES)) {
-    console.log(formatFileLine(file));
+  for (const line of renderAnalyzeHeader({
+    extraction: outcome.extraction,
+    result: outcome.result,
+    root: opts.root,
+    reportFile: opts.reportFile,
+  })) {
+    console.log(line);
   }
-  if (extraction.files.length > MAX_LISTED_FILES) {
-    console.log(`  … and ${extraction.files.length - MAX_LISTED_FILES} more file(s)`);
-  }
-  if (extraction.truncated) printTruncationWarning(extraction);
-  console.log(
-    opts.reportFile ? `  report written: ${opts.reportFile}` : '  (dry-run) report not written',
-  );
+  if (outcome.extraction.truncated) printTruncationWarning(outcome.extraction);
 }
 
 /** `--output json`: the SpecAnalysisResult and nothing else on stdout. */
@@ -72,60 +51,9 @@ export function printAnalysisJson(result: SpecAnalysisResult): void {
   console.log(JSON.stringify(result, null, 2));
 }
 
-/** The output side of one analysis: test deltas, drift alerts, impact summary. */
-export interface OutputSideView {
-  readonly testDeltas: readonly SpecTestCaseDelta[];
-  readonly driftAlerts: readonly SpecChangeDriftAlert[];
-  readonly impactSummary: SpecImpactSummary;
-  readonly synthesis: {
-    readonly refined: boolean;
-    readonly refinementError?: { readonly code: string; readonly message: string };
-  };
-}
-
 /** `--output text` lines for the test deltas, impact summary and drift alerts. */
 export function printOutputSideSummary(view: OutputSideView): void {
-  const { testDeltas, driftAlerts, impactSummary } = view;
-  const counts = { new: 0, update: 0, obsolete: 0 };
-  for (const d of testDeltas) counts[d.type]++;
-
-  const provenance = view.synthesis.refined ? 'llm-refined' : 'rules';
-  console.log(
-    `  test deltas:     ${testDeltas.length}` +
-      (testDeltas.length > 0
-        ? ` (${counts.new} new, ${counts.update} update, ${counts.obsolete} obsolete — ${provenance})`
-        : ''),
-  );
-  for (const d of testDeltas.slice(0, MAX_LISTED_DELTAS)) {
-    console.log(
-      `    ${d.type.padEnd(8)} ${d.id}  [${d.priority}] ${d.title}  → ${d.linkedRequirementId}`,
-    );
-  }
-  if (testDeltas.length > MAX_LISTED_DELTAS) {
-    console.log(`    … and ${testDeltas.length - MAX_LISTED_DELTAS} more delta(s)`);
-  }
-
-  const files = impactSummary.affectedFiles
-    .map((f) => `${f.path}:${f.lines.length > 0 ? f.lines.join(',') : '?'}`)
-    .join(', ');
-  console.log(
-    `  impact:          requirements: ${
-      impactSummary.affectedRequirementIds.length > 0
-        ? impactSummary.affectedRequirementIds.join(', ')
-        : '(none)'
-    }`,
-  );
-  console.log(`                   files: ${files.length > 0 ? files : '(none)'}`);
-  console.log(`                   next: ${impactSummary.recommendedNextAction}`);
-  console.log(`                   confidence: ${impactSummary.confidence.toFixed(2)}`);
-
-  console.log(`  drift alerts:    ${driftAlerts.length > 0 ? String(driftAlerts.length) : '(none)'}`);
-  for (const alert of driftAlerts.slice(0, MAX_LISTED_ALERTS)) {
-    console.log(formatDriftAlert(alert));
-  }
-  if (driftAlerts.length > MAX_LISTED_ALERTS) {
-    console.log(`    … and ${driftAlerts.length - MAX_LISTED_ALERTS} more alert(s)`);
-  }
+  for (const line of renderOutputSideSection(view)) console.log(line);
 }
 
 /** Per-event summary lines for one debounced watch batch. */
@@ -141,9 +69,8 @@ export function printWatchBatchSummary(
 
   console.log(
     `[${stamp}] change ${outcome.changeId.slice(0, 12)} — ${extraction.files.length} file(s) ` +
-      `${delta(totalAdded, totalRemoved)} (from ${batch.paths.join(', ')})`,
+      `+${totalAdded} -${totalRemoved} (from ${batch.paths.join(', ')})`,
   );
-  for (const file of extraction.files) console.log(formatFileLine(file));
-  if (extraction.truncated) printTruncationWarning(extraction);
+  for (const file of extraction.files) console.log(renderFileLine(file));
   if (reportFile) console.log(`  report written: ${reportFile}`);
 }
