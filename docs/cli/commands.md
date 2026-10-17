@@ -171,30 +171,42 @@ codexrev models remove model gpt-4o --provider openai-prod
 
 ### `codexrev spec`
 
-Living Specification Engine (Feature 1) — watches/analyzes source-code changes and incrementally maintains a "living URS" with drift alerts and test-case deltas. State lives in `<target-project>/.codexrev/living-spec/`. See [Living Specification Engine](../living-spec.md) for the state layout and the stable analysis contract.
-
-> **Status:** `analyze` and `watch` run the **deterministic front half** of the pipeline
-> (diff extraction + change buffering → report JSON). The semantic analyzer (requirement
-> implications, URS patches, test deltas) is **in development**. `status`, `history`,
-> `accept`, `reject` and `defer` operate on the state store.
+Living Specification Engine — watches/analyzes source-code changes and incrementally maintains a "living URS": requirement implications, drift, human-gated update proposals, incremental test-case deltas and drift alerts. State lives in `<target-project>/.codexrev/living-spec/`. See [Living Specification Engine](../living-spec.md) for the pipeline, the state layout and the stable analysis contract.
 
 ```bash
-codexrev spec status                  # URS version, pending proposals, last drift alerts
+codexrev spec analyze --diff HEAD~1   # one-shot analysis → report JSON + pending proposals
+codexrev spec watch                   # foreground watch session (live TUI on a TTY)
+codexrev spec status                  # URS version, open proposals, latest drift alerts
 codexrev spec history                 # URS versions with their trigger change ids
-codexrev spec accept prop-17          # act on a pending URS proposal
-codexrev spec analyze --diff HEAD~1   # one-shot analysis of a diff
-codexrev spec watch --debounce 800    # foreground watch session
+codexrev spec accept prop-17          # act on a pending URS proposal (also: reject / defer)
+codexrev spec init-urs                # seed a starter living URS if none exists
+codexrev spec eval --mode live        # run the labelled scenario corpus and emit the eval report
+codexrev spec help analyze            # per-command help screen (also: --help / -h)
 ```
+
+Global flags (accepted by every subcommand):
+
+| Flag | Type | Description |
+| --- | --- | --- |
+| `--project` | `string` | Target project root (default: current directory) |
+| `--output` | `text \| json` | Report format (default: `text`; `json` prints machine-readable output) |
+| `--quiet` | boolean | Suppress progress output (`analyze`/`watch` only — data commands still print) |
 
 | Subcommand | Flags | Description |
 | --- | --- | --- |
-| `analyze` | `--diff <ref>` (default `staged`), `--project <path>`, `--output json\|text`, `--dry-run` | One-shot analysis of a diff: diff extraction + buffering → report JSON under `reports/<changeId>.json` *(semantic analyzer in development)* |
-| `watch` | `--debounce <ms>` (default `800`), `--paths <globs>`, `--dry-run` | Foreground watch session over the same pipeline; exits cleanly on Ctrl+C — never a daemon *(semantic analyzer in development)* |
-| `status` |  | Show the current URS version, pending proposals and last drift alerts |
-| `history` |  | List URS versions with their trigger change ids |
-| `accept <id>` |  | Accept a pending URS proposal |
-| `reject <id>` |  | Reject a pending URS proposal |
-| `defer <id>` |  | Defer a pending URS proposal |
+| `analyze` | `--diff <ref>` (default `staged`), `--dry-run`, `--provider`, `--model`, `--offline`, `--timeout <ms>` | One-shot analysis: implications, drift, scoped proposals, test deltas, drift alerts and impact summary → `reports/<changeId>.json`. `--dry-run` is deterministic-only: no model calls, nothing written |
+| `watch` | `--debounce <ms>` (default `800`), `--paths <globs>`, `--dry-run` | Foreground watch session over the same pipeline; identical saves are deduped. On a TTY a live view shows pipeline progress (diff → infer → compare → proposal), counts and a conflict banner; in pipes/CI the same events print as plain lines. Exits cleanly on Ctrl+C — never a daemon |
+| `eval` | `--corpus <path>`, `--mode A\|B\|C\|batch\|single-pass\|full\|live\|all` (default `all`), `--provider`, `--model`, `--live` | Controlled evaluation (research): replays the labelled scenario corpus and emits `reports/eval-<timestamp>.json` + `.md` — implication precision/recall/F1, drift classification accuracy + false-alert rate, scoped-update correctness, test-delta relevance, latency (median + P95) and peak RSS. `A` manual/batch · `B` single-pass without prior-URS comparison · `C` full pipeline, explicit invocation · `live` runs the real local model over the corpus. Offline scripted provider by default; see [evaluation evidence](../living-spec-evaluation.md) |
+| `status` | | Show the current URS version, pending/deferred proposals and the latest drift alerts (bounded) |
+| `history` | | List URS versions with their trigger change ids |
+| `accept <id>` | | Accept a pending proposal — the only path that updates the URS (bumps the version, records a snapshot) |
+| `reject <id>` | | Record a rejection; the URS is untouched |
+| `defer <id>` | | Keep a proposal open and visible in `status` until resolved |
+| `init-urs` | | Seed a starter living URS (`urs.md` + `urs.json`) if the project has none yet |
+
+Exit codes: `0` success · `1` error (bad config, unknown proposal, failed analysis) · `2` bad usage (unknown subcommand or missing id).
+
+Failure hints: an unreachable model server prints how to fix it (`start ollama / lm studio, or run with --dry-run`); malformed/schema-invalid model output is never applied (NFR5) and says so; truncated diffs explain what was cut and how to raise `maxBytes`.
 
 ## TUI slash commands
 

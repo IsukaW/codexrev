@@ -13,16 +13,82 @@ surfaced as alerts, and test-case deltas are suggested alongside each requiremen
 
 ## Commands
 
-See [`codexrev spec`](cli/commands.md#codexrev-spec) for the full flag reference.
+Everything lives under one top-level command group, `codexrev spec`. The table below is the
+summary; see [`codexrev spec`](cli/commands.md#codexrev-spec) for the full hand-rolled help
+screen and every flag in one place.
 
 | Subcommand | Purpose |
 | --- | --- |
 | `spec analyze` | One-shot analysis of a diff → report JSON (proposals + test deltas + drift alerts + impact summary) |
 | `spec watch` | Foreground watch session over the same pipeline (command-triggered only — never a background daemon) |
+| `spec eval` | Controlled evaluation: replay the labelled scenario corpus → metrics report ([evidence pack](living-spec-evaluation.md)) |
+| `spec init-urs` | Seed a starter living URS skeleton (`urs.md` + `urs.json`) if none exists |
 | `spec status` | Current URS version, pending proposals, latest drift alerts (bounded list) |
 | `spec history` | URS versions with their trigger change ids |
-| `spec accept <id>` / `spec reject <id>` / `spec defer <id>` | Act on a pending URS proposal |
-| `spec init-urs` | Seed a starter living URS skeleton if none exists |
+| `spec accept <id>` | Apply a pending proposal to the living URS, bump the version, mark it accepted |
+| `spec reject <id>` | Mark a proposal rejected — the URS is untouched |
+| `spec defer <id>` | Mark a proposal deferred — it stays listed in `spec status` for later |
+| `spec eval` | Run the labelled scenario corpus and emit the evaluation report (metrics + Markdown summary) |
+
+### Core subcommand flags
+
+| Subcommand | Flag | Default | Meaning |
+| --- | --- | --- | --- |
+| `analyze` | `--diff <ref>` | staged changes | Git ref (or ref range) to diff against |
+| `analyze` | `--output text\|json` | `text` | Human-readable summary vs the full `SpecAnalysisResult` |
+| `analyze` | `--dry-run` | off | Deterministic half only — no model calls, nothing written |
+| `analyze` | `--provider <id>` | local (`ollama`/`lmstudio`) | Override the inference provider |
+| `analyze` | `--model <id>` | project default | Override the model |
+| `analyze` | `--offline` | off | Assert no network provider is used (proves NFR2/FR14) |
+| `analyze` | `--timeout <ms>` | provider default | Abort a slow model call (NFR5 keeps prior URS intact) |
+| `watch` | `--debounce <ms>` | `800` | Coalesce rapid saves of the same file |
+| `watch` | `--paths <globs>` | `includePaths` in `config.json` | Restrict the watched set |
+| `watch` | `--dry-run` | off | Run the pipeline without writing proposals/reports |
+| `eval` | `--corpus <path>` | bundled scenarios | Path to the labelled scenario corpus |
+| `eval` | `--mode A\|B\|C\|live` | `live` | `A` manual/batch · `B` single-pass (no prior-URS) · `C` full pipeline, explicit invocation · `live` local model |
+| `eval` | `--provider <id>` | local | Provider used for `--mode live` |
+| `eval` | `--output <path>` | `.codexrev/living-spec/reports/eval-<timestamp>.json` | Where to write the report |
+
+### Global flags (all subcommands)
+
+| Flag | Meaning |
+| --- | --- |
+| `--project <path>` | Target project root (defaults to the current working directory) |
+| `--output text\|json` | Human-readable vs machine-readable output |
+| `--quiet` | Suppress progress output (keeps results/errors) |
+| `--help` | Hand-rolled help screen, consistent with the rest of the CLI |
+
+### Typical session flow
+
+```bash
+# One-time setup in a target project
+codexrev spec init-urs
+
+# Analyze the currently staged changes once
+codexrev spec analyze
+
+# Watch mode while coding — runs until Ctrl+C, never a daemon
+codexrev spec watch --debounce 1000 --paths "src/**/*.ts"
+
+# Review what the engine proposed, then decide
+codexrev spec status
+codexrev spec accept prop-abc123
+codexrev spec history
+
+# Later, when running the evaluation
+codexrev spec eval --mode live --provider ollama
+```
+
+### Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Success |
+| `1` | Runtime error (model unavailable, invalid state, …) |
+| `2` | Bad usage / missing required argument |
+
+There is deliberately **no** `spec daemon`, no background service and no installed git hook:
+analysis only ever runs while an `analyze`/`watch`/`eval` invocation is in progress.
 
 ## Pipeline
 
@@ -87,8 +153,9 @@ persisted as authoritative.
 `analyze` extracts the diff from a git ref (default: staged changes) with `simple-git`
 and `parsePatch()`, runs every changed file through the debounce/dedupe buffer, derives a
 stable `changeId` (hash of ref + file list + diff content) and writes the result to
-`.codexrev/living-spec/reports/<changeId>.json`. `--dry-run` prints without writing;
-`--output json` prints the full `SpecAnalysisResult` (and nothing else on stdout).
+`.codexrev/living-spec/reports/<changeId>.json`. `--dry-run` is **deterministic-only** —
+no model calls, nothing written; `--output json` prints the full `SpecAnalysisResult`
+(and nothing else on stdout); `--quiet` suppresses the progress output.
 
 Extraction guarantees:
 
@@ -103,10 +170,59 @@ Extraction guarantees:
 
 `watch` is a foreground session over the same buffer + extraction path: saves are
 debounced per path (`--debounce`, default 800 ms), identical content hashes are analysed
-at most once (NFR3), each debounced change runs the **full pipeline back half** and
-prints a per-event summary (`--output json` prints the report JSON instead), and Ctrl+C
-ends the session cleanly. The filesystem watcher (chokidar) sits behind a small
-`WatcherPort` interface so the provider is swappable.
+at most once (NFR3, reported as `deduped` in the live view), each debounced change runs
+the **full pipeline back half**, and Ctrl+C ends the session cleanly with a shutdown
+summary. The filesystem watcher (chokidar) sits behind a small `WatcherPort` interface so
+the provider is swappable.
+
+## Command UX
+
+All screens come from pure renderer functions (`cli/reportRenderer.ts`,
+`cli/specSessionState.ts`), so text output is deterministic and unit-tested.
+
+**`spec watch` — events → reducer → render.** Every session step is a typed event
+(`cli/specSessionEvents.ts`): saves (`change_detected` / `change_deduped`), batch
+lifecycle (`batch_start`, `stage`, `batch_complete`, `batch_skipped`, `batch_error`) and
+`stopped`. One pure reducer turns them into view state — running counts (analyzed /
+deduped / proposals / alerts), the latest drift status, and a bounded event log:
+
+- **TTY** — a persistent Ink view (`cli/SpecSessionView.tsx`) renders the state: watched
+  paths + debounce (with paths currently debouncing), the pipeline stage trail
+  (`diff → infer → compare → proposal → outputs`), the event log, the latest drift, a
+  **banner whenever drift alerts fire** (red for critical conflicts) and running counts.
+- **pipes / CI** — the same events print as plain lines (e.g.
+  `deduped src/greet.js (identical to the last analysed state)`), so watch works in
+  scripts; `--output json` prints the raw report JSON per batch instead.
+- **shutdown** — after Ctrl+C (or the stop signal) the session prints a plain summary:
+  batches analyzed, saves deduped, proposals, alerts, reports written, plus a pointer to
+  `spec status` when critical alerts exist.
+
+**Text screens** (`--output text`, the default) use aligned tables for implications and
+test deltas, a change-impact block, one line per drift alert and clear proposal ids;
+`--output json` prints a single machine-readable document per command (`status` includes
+open proposals + the alert tail, `history` the snapshot list, decisions the outcome).
+
+**Per-command help**: `codexrev spec help [sub]` (or `--help` on any spec subcommand)
+prints the hand-rolled help screen with flags, exit codes and examples.
+
+**Exit codes**: `0` success · `1` error (bad config, unknown proposal, failed analysis) ·
+`2` bad usage (unknown subcommand or missing id) — same convention as the rest of the CLI.
+
+**Failure paths** are actionable: an unreachable model server prints
+`start ollama / lm studio, or run with --dry-run`; malformed or schema-invalid model
+output explains that nothing was applied or persisted (NFR5) and that the deterministic
+analysis stands; a truncated diff says exactly what was omitted and that raising
+`maxBytes` in the config widens the view.
+
+## Evaluation
+
+`codexrev spec eval` replays the labelled scenario corpus
+(`tests/features/living-spec/fixtures/scenarios/`) through three comparison modes and
+reports implication precision/recall/F1, drift accuracy, false-alert rate on refactors,
+scoped-update correctness, test-delta relevance, latency (median/P95) and peak RSS to
+`reports/eval-<timestamp>.json` + `.md`. It runs fully offline by default (scripted
+provider, no network). See [living-spec-evaluation.md](living-spec-evaluation.md) for the
+reproduction steps, results, test inventory and the FR/NFR/SO evidence mapping.
 
 ## Integration contract
 
@@ -268,14 +384,18 @@ write; a corrupt config fails fast instead of silently watching the wrong paths.
 
 CLI flags override the config per run: `--provider`, `--model`, `--timeout` (inference),
 `--offline` (assert a local provider — NFR2/FR14), `--diff <ref>`, `--paths <globs>`,
-`--debounce <ms>`, `--output json|text`, `--dry-run`, `--project <path>`.
+`--debounce <ms>`, `--output json|text`, `--dry-run` (deterministic-only, nothing
+written), `--quiet` (suppress progress output), `--project <path>`.
 
 ## Code layout
 
 Mirrors the review-pipeline feature:
 
 - `src/features/living-spec/cli/` — yargs command registration + handlers, the shared
-  `analysisPass` (pipeline back half) and the human-facing `specOutput` renderers
+  `analysisPass` (pipeline back half), the pure `reportRenderer` + `specOutput` wrappers,
+  the hand-rolled `specHelp` screen, and the watch session UI
+  (`specSessionEvents` bus → `specSessionState` reducer → `SpecSessionView` Ink tree or
+  the plain-line fallback)
 - `src/features/living-spec/pipeline/` — pure domain logic, no CLI concerns:
   `diffExtractor`, `changeBuffer`, `analysisRunner`, `inferenceEngine`, `llmPort`,
   `promptBuilder`, `driftComparator`, `ursPatcher`, `ursModel`, `versionStore`,

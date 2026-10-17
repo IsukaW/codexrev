@@ -84,6 +84,19 @@ Use `codexrev models add` to interactively manage providers and models in `.code
 - 📦 **Programmatic API** — embed Codexrev in your own Node.js apps (ESM + CJS)
 - 🧭 **Models wizard** — interactive `codexrev models add` to register providers and models with encrypted API key storage
 
+## Living Specification Engine
+
+`codexrev spec` keeps a **living URS** (User Requirements Specification) in sync with your code: each change yields requirement implications, drift against the URS, scoped update proposals (human-gated), incremental test-case deltas and drift alerts — all persisted as report JSON under `.codexrev/living-spec/`.
+
+```bash
+codexrev spec analyze --diff HEAD~1   # one-shot analysis → report JSON + pending proposals
+codexrev spec watch                   # live watch session (TUI on a TTY, plain lines in CI)
+codexrev spec status                  # URS version, open proposals, latest drift alerts
+codexrev spec accept <proposal-id>    # apply a scoped URS update (bumps the version)
+```
+
+See [docs/living-spec.md](docs/living-spec.md) for the pipeline, the JSON integration contract and the configuration reference.
+
 ## Slash Commands
 
 ```
