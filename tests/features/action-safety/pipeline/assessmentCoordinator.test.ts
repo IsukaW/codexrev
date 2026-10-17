@@ -65,8 +65,6 @@ function strongInput(over: Record<string, unknown> = {}): Record<string, unknown
       requiredRoles: ['developer'],
       requiredPermissions: ['deploy'],
       grantedPermissions: { permissions: ['deploy'], evidence: attested() },
-      requiredApprovals: 1,
-      approvals: [{ approverId: 'bob', evidence: attested() }],
     },
     reports: { buildTests: ['reports/tests.json'], security: ['reports/sec.sarif'] },
     recovery: { rollbackPlan: attested(), rollbackTest: attested(), backup: attested() },
@@ -225,12 +223,10 @@ describe('assessAction: Critical Safety Gates always win', () => {
     expect(o.limitations.join(' ')).toMatch(/cannot be verified from an input file/);
   });
 
-  it('missing human approval prevents ALLOW (ESCALATE) when required', async () => {
-    const input = withAuthority({ approvals: undefined, requiredApprovals: 0 });
-    const o = await run(JSON.parse(JSON.stringify(input)) as Record<string, unknown>);
-    expect(gate(o, 'HUMAN_APPROVAL')).toMatchObject({ status: 'FAIL', consequence: 'ESCALATE' });
-    expect(o.preliminaryDecision).toBe('ALLOW');
-    expect(o.finalDecision).toBe('ESCALATE');
+  it('there is no Human Approval gate: the assessment evaluates four gates and approval claims are rejected as invalid input', async () => {
+    const o = await run(strongInput());
+    expect(o.gates.results.map((g) => g.gate).sort()).toEqual(['AUTHORIZATION', 'BUILD_TEST_RESULTS', 'SUPPORTING_EVIDENCE', 'VERIFIED_RECOVERY']);
+    await expect(run(withAuthority({ requiredApprovals: 1, approvals: [{ approverId: 'bob', evidence: attested() }] }))).rejects.toThrow(/approvals|requiredApprovals/);
   });
 
   it('missing verified recovery prevents ALLOW when recovery is required (a documented plan alone is not verified)', async () => {
@@ -265,9 +261,9 @@ describe('assessAction: Critical Safety Gates always win', () => {
     expect(gate(staleTests, 'BUILD_TEST_RESULTS').status).toBe('UNKNOWN');
     expect(staleTests.finalDecision).toBe('BLOCK');
 
-    const staleApproval = await run(withAuthority({ approvals: [{ approverId: 'bob', evidence: attested(STALE) }] }));
-    expect(gate(staleApproval, 'HUMAN_APPROVAL').status).toBe('UNKNOWN');
-    expect(staleApproval.finalDecision).not.toBe('ALLOW');
+    const staleAuthorization = await run(withAuthority({ authorization: attested(STALE) }));
+    expect(gate(staleAuthorization, 'AUTHORIZATION').status).toBe('UNKNOWN');
+    expect(staleAuthorization.finalDecision).toBe('BLOCK');
   });
 
   it('with nothing supplied no gate passes and the outcome is BLOCK', async () => {
@@ -279,7 +275,7 @@ describe('assessAction: Critical Safety Gates always win', () => {
 
   it('honours a gate policy stated in the input (and only then is the default not used)', async () => {
     const lenient: GatePolicy = {
-      authorization: { required: false }, humanApproval: { required: false }, recovery: { required: false, whenIrreversible: false },
+      authorization: { required: false }, recovery: { required: false, whenIrreversible: false },
       buildTests: { required: false }, supportingEvidence: { required: false },
     };
     const o = await run({ ...strongInput(), policy: lenient });
@@ -446,7 +442,7 @@ describe('assessAction: failures carry no decision', () => {
 
   it('an unusable gate policy is an invalid-input failure', async () => {
     const bundle = await bundleFor(strongInput());
-    const bad = { ...DEFAULT_GATE_POLICY, humanApproval: { required: true, consequence: 'ALLOW' } } as unknown as GatePolicy;
+    const bad = { ...DEFAULT_GATE_POLICY, supportingEvidence: { required: true, consequence: 'ALLOW' } } as unknown as GatePolicy;
     expect(failed(assessAction({ bundle, interpretation: interp('COMPLETED'), now: NOW, policy: { gates: bad } })).failureKind).toBe('invalid_input');
   });
 

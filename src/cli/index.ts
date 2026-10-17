@@ -134,7 +134,11 @@ async function main(): Promise<void> {
             type: 'boolean',
             default: false,
             describe: 'Skip the TUI wizard (requires --provider and --model)',
-          }),
+          })
+          .option('authorize', { type: 'boolean', describe: 'Feature 4: set up the employee authorization certificate (administrator-led)' })
+          .option('level', { type: 'string', describe: 'Feature 4: authorization level L1 | L2 | L3 | L4 | L5' })
+          .option('employee-id', { type: 'string', describe: 'Feature 4: employee id for the signed certificate' })
+          .option('employee-name', { type: 'string', describe: 'Feature 4: employee name' })
     )
     .command('extensions', 'Manage installed extensions', (y) =>
       y
@@ -226,6 +230,8 @@ async function main(): Promise<void> {
       diff: argv.diff,
       output: argv.output,
       file: argv.file,
+      strict: argv.strict,
+      app: argv.app,
     });
     return;
   }
@@ -260,6 +266,12 @@ async function main(): Promise<void> {
       timeoutMs: flags.timeoutMs ?? (raw['timeout-ms'] as number | undefined),
       reset: !!flags.reset,
       nonInteractive: !!flags.nonInteractive || !process.stdout.isTTY,
+      authorization: {
+        ...(raw['authorize'] === true ? { authorize: true } : {}),
+        ...(typeof raw['level'] === 'string' ? { level: raw['level'] } : {}),
+        ...(typeof raw['employee-id'] === 'string' ? { employeeId: raw['employee-id'] } : {}),
+        ...(typeof raw['employee-name'] === 'string' ? { employeeName: raw['employee-name'] } : {}),
+      },
     });
     return;
   }

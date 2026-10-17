@@ -24,39 +24,37 @@ function fullInput(overrides: Partial<AuthorityAssessmentInput> = {}): Authority
     requiredRoles: ['release-manager'],
     requiredPermissions: ['deploy:prod'],
     granted: { permissions: ['deploy:prod', 'read:logs'], evidence: verified(['rbac:grant-1']) },
-    requiredApprovals: 1,
-    approvals: [{ approverId: 'bob', evidence: verified(['approval:bob']) }],
     ...overrides,
   };
 }
 
 describe('assessAuthority', () => {
-  it('scores 1 when identity, roles, permissions and approvals are all verified', () => {
+  it('scores 1 when identity, roles and permissions are all verified', () => {
     const a = assessAuthority(fullInput());
     expect(a.factor).toBe('authority');
     expect(a.score).toBe(1);
     expect(a.missing).toEqual([]);
     expect(a.conflicts).toEqual([]);
-    expect(a.evidenceRefs).toEqual(expect.arrayContaining(['sso:alice', 'rbac:grant-1', 'approval:bob']));
+    expect(a.evidenceRefs).toEqual(expect.arrayContaining(['sso:alice', 'rbac:grant-1']));
   });
 
   it('does not treat self-declared permissions as verified authority', () => {
     const selfDeclared: EvidenceItem = { status: 'PASS', source: 'self_declared', observedAt: FRESH };
     const a = assessAuthority(fullInput({ granted: { permissions: ['deploy:prod'], evidence: selfDeclared } }));
-    expect(a.score).toBeCloseTo(0.65, 6); // permissions component is worth 0
+    expect(a.score).toBeCloseTo(0.5, 6); // permissions component is worth 0 (weights: identity 0.25, roles 0.25, permissions 0.5)
     expect(a.uncertain.join(' ')).toMatch(/not trusted/);
   });
 
   it('treats a permission list with no proving record as unverified', () => {
     const a = assessAuthority(fullInput({ granted: { permissions: ['deploy:prod'] } }));
-    expect(a.score).toBeCloseTo(0.65, 6);
+    expect(a.score).toBeCloseTo(0.5, 6);
     expect(a.missing).toContain('permission grant record');
   });
 
-  it('reports missing grants and approvals', () => {
-    const a = assessAuthority(fullInput({ granted: undefined, approvals: undefined }));
-    expect(a.missing).toEqual(expect.arrayContaining(['granted permissions', 'human approvals']));
-    expect(a.score).toBeLessThan(0.5);
+  it('reports missing grants', () => {
+    const a = assessAuthority(fullInput({ granted: undefined }));
+    expect(a.missing).toEqual(expect.arrayContaining(['granted permissions']));
+    expect(a.score).toBeLessThanOrEqual(0.5);
   });
 
   it('gives partial credit when only some required permissions are granted', () => {
@@ -67,43 +65,12 @@ describe('assessAuthority', () => {
     expect(a.uncertain.join(' ')).toMatch(/db:migrate/);
   });
 
-  it('ignores an actor approving their own action', () => {
-    const a = assessAuthority(fullInput({ approvals: [{ approverId: 'alice', evidence: verified(['self']) }] }));
-    expect(a.uncertain.join(' ')).toMatch(/cannot approve their own action/);
-    expect(a.missing).toContain('human approvals');
-    expect(a.score).toBeCloseTo(0.75, 6);
-  });
-
-  it('counts the same approver only once', () => {
-    const a = assessAuthority(
-      fullInput({
-        requiredApprovals: 2,
-        approvals: [
-          { approverId: 'bob', evidence: verified(['a1']) },
-          { approverId: 'bob', evidence: verified(['a2']) },
-        ],
-      }),
-    );
-    expect(a.breakdown.find((c) => c.name === 'human approvals')!.value).toBeCloseTo(0.5, 6);
-  });
-
-  it('gives partial credit when fewer approvals than required are present', () => {
-    const a = assessAuthority(fullInput({ requiredApprovals: 2 }));
-    expect(a.score).toBeCloseTo(0.875, 6);
-  });
-
-  it('lets an explicit rejection zero the approvals and flags the conflict if others approved', () => {
-    const a = assessAuthority(
-      fullInput({
-        approvals: [
-          { approverId: 'bob', evidence: verified(['a']) },
-          { approverId: 'carol', evidence: { status: 'FAIL', refs: ['rej'] } },
-        ],
-      }),
-    );
-    expect(a.breakdown.find((c) => c.name === 'human approvals')!.value).toBe(0);
-    expect(a.conflicts).toEqual(['some approvers approved while another explicitly rejected']);
-    expect(a.score).toBeCloseTo(0.75, 6);
+  it('has no approval component: approval inputs are not part of the Authority factor and cannot add or remove credit', () => {
+    const base = assessAuthority(fullInput());
+    const withApprovalFields = assessAuthority({ ...fullInput(), requiredApprovals: 3, approvals: [{ approverId: 'bob', evidence: { status: 'FAIL', refs: ['rej'] } }] } as unknown as AuthorityAssessmentInput);
+    expect(withApprovalFields.score).toBe(base.score);
+    expect(base.breakdown.map((c) => c.name)).not.toContain('human approvals');
+    expect(base.breakdown.map((c) => c.weight)).toEqual([0.25, 0.25, 0.5]);
   });
 
   it('caps the score when identity is not verified', () => {
@@ -113,14 +80,14 @@ describe('assessAuthority', () => {
     expect(a.adjustments.map((x) => x.name)).toEqual(['unverified identity cap']);
   });
 
-  it('gives less credit to stale approvals than fresh ones, with an exact boundary at the max age', () => {
+  it('gives less credit to a stale permission grant than a fresh one, with an exact boundary at the max age', () => {
     const nowMs = Date.parse(NOW);
-    const limit = 72 * 3_600_000;
-    const approval = (observedAt: string) => fullInput({ approvals: [{ approverId: 'bob', evidence: verified(['a'], observedAt) }] });
-    const atLimit = assessAuthority(approval(new Date(nowMs - limit).toISOString()));
-    const over = assessAuthority(approval(new Date(nowMs - limit - 1).toISOString()));
+    const limit = 720 * 3_600_000;
+    const grant = (observedAt: string) => fullInput({ granted: { permissions: ['deploy:prod'], evidence: verified(['rbac:grant-1'], observedAt) } });
+    const atLimit = assessAuthority(grant(new Date(nowMs - limit).toISOString()));
+    const over = assessAuthority(grant(new Date(nowMs - limit - 1).toISOString()));
     expect(atLimit.score).toBe(1);
-    expect(over.score).toBeCloseTo(0.875, 6);
+    expect(over.score).toBeLessThan(1);
     expect(over.uncertain.join(' ')).toMatch(/older than/);
   });
 
@@ -143,8 +110,8 @@ describe('assessAuthority', () => {
   });
 
   it('direction: more verified authority gives a higher score', () => {
-    const none = assessAuthority(fullInput({ identityVerification: undefined, granted: undefined, approvals: undefined })).score;
-    const some = assessAuthority(fullInput({ approvals: undefined })).score;
+    const none = assessAuthority(fullInput({ identityVerification: undefined, granted: undefined })).score;
+    const some = assessAuthority(fullInput({ granted: undefined })).score;
     const all = assessAuthority(fullInput()).score;
     expect(none).toBeLessThan(some);
     expect(some).toBeLessThan(all);
@@ -155,16 +122,13 @@ describe('assessAuthority', () => {
   });
 
   it('rejects invalid input', () => {
-    expect(() => assessAuthority(fullInput({ requiredApprovals: 1.5 }))).toThrow(FactorInputError);
-    expect(() => assessAuthority(fullInput({ requiredApprovals: -1 }))).toThrow(FactorInputError);
     expect(() => assessAuthority(fullInput({ now: 'nope' }))).toThrow(FactorInputError);
   });
 
   it('a perfect authority score cannot override a failing Critical Safety Gate', () => {
     expect(assessAuthority(fullInput()).score).toBe(1);
     const policy: GatePolicy = {
-      authorization: { required: false },
-      humanApproval: { required: true },
+      authorization: { required: true },
       recovery: { required: false, whenIrreversible: false },
       buildTests: { required: false },
       supportingEvidence: { required: false },
@@ -175,6 +139,6 @@ describe('assessAuthority', () => {
       evidence: {},
       policy,
     });
-    expect(constrainDecision('ALLOW', gates)).toBe('ESCALATE');
+    expect(constrainDecision('ALLOW', gates)).toBe('BLOCK');
   });
 });

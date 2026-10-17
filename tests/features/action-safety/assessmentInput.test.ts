@@ -25,7 +25,6 @@ const FULL_INPUT = {
   actor: { id: 'alice', kind: 'human', roles: ['release-manager'] },
   authority: {
     authorization: { status: 'PASS', refs: ['rbac:1'], observedAt: '2025-01-10T06:00:00.000Z', source: 'verified_system' },
-    humanApproval: { status: 'UNKNOWN' },
   },
   evidence: {
     buildTests: { status: 'FAIL' },
@@ -34,7 +33,6 @@ const FULL_INPUT = {
   },
   policy: {
     authorization: { required: true },
-    humanApproval: { required: true, consequence: 'BLOCK' },
     recovery: { required: true, whenIrreversible: true, minImpact: 'high' },
     buildTests: { required: true },
     supportingEvidence: { required: false, consequence: 'ESCALATE' },
@@ -131,7 +129,9 @@ describe('parseAssessmentInput', () => {
   it('rejects invalid policy values', () => {
     const withPolicy = (patch: Record<string, unknown>) => ({ policy: { ...clone(FULL_INPUT.policy), ...patch } });
     expect(() => parseAssessmentInput(withPolicy({ authorization: { required: 'yes' } }))).toThrow(/true or false/);
-    expect(() => parseAssessmentInput(withPolicy({ humanApproval: { required: true, consequence: 'ALLOW' } }))).toThrow(/BLOCK, ESCALATE/);
+    expect(() => parseAssessmentInput(withPolicy({ supportingEvidence: { required: true, consequence: 'ALLOW' } }))).toThrow(/BLOCK, ESCALATE/);
+    // the Human Approval gate no longer exists: its rule (and its evidence) are unknown fields, not silently ignored
+    expect(() => parseAssessmentInput(withPolicy({ humanApproval: { required: true, consequence: 'BLOCK' } }))).toThrow(/humanApproval/);
     expect(() => parseAssessmentInput(withPolicy({ recovery: { required: true, whenIrreversible: true, minImpact: 'huge' } }))).toThrow(/minImpact/);
     expect(() => parseAssessmentInput(withPolicy({ recovery: { required: true } }))).toThrow(/whenIrreversible/);
   });

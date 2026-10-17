@@ -71,25 +71,6 @@ export function toGateInputs(b: EvidenceBundle): { authority: AuthorityContext; 
   const authz = recordsOf(b, 'authority', (r) => authorityKind(r) === 'authorization');
   const authorization = authz.length > 0 ? itemFromRecords(authz, aggregateStatus(authz.map(gateStatusOf)) ?? 'UNKNOWN') : undefined;
 
-  // human approval: the approval record and approvals by people other than the actor
-  const approvalRecs = recordsOf(
-    b,
-    'authority',
-    (r) => authorityKind(r) === 'human_approval' || (authorityKind(r) === 'approval' && r.details?.approverId !== actor.id),
-  );
-  let humanApproval: EvidenceItem | undefined;
-  if (approvalRecs.length > 0) {
-    const views = approvalRecs.map(gateStatusOf);
-    let status: EvidenceStatus;
-    if (views.includes('FAIL')) status = 'FAIL';
-    else {
-      const approvers = new Set(approvalRecs.filter((r, i) => views[i] === 'PASS').map((r) => String(r.details?.approverId ?? r.id)));
-      const needed = Math.max(1, b.authority.requiredApprovals);
-      status = approvers.size >= needed ? 'PASS' : 'UNKNOWN';
-    }
-    humanApproval = itemFromRecords(approvalRecs, status);
-  }
-
   const bt = recordsOf(b, 'build_test');
   const buildTests = itemFromRecords(bt, aggregateStatus(bt.map(gateStatusOf)) ?? 'UNKNOWN');
 
@@ -103,7 +84,7 @@ export function toGateInputs(b: EvidenceBundle): { authority: AuthorityContext; 
   const supporting = itemFromRecords(sup, aggregateStatus(supportStatuses) ?? 'UNKNOWN');
 
   return {
-    authority: { actor, ...(authorization ? { authorization } : {}), ...(humanApproval ? { humanApproval } : {}) },
+    authority: { actor, ...(authorization ? { authorization } : {}) },
     evidence: { buildTests, supporting, ...(b.recovery.gateEvidence ? { recovery: b.recovery.gateEvidence } : {}) },
   };
 }
@@ -160,9 +141,6 @@ export function toAuthorityInput(b: EvidenceBundle, now: string): AuthorityAsses
   const a = b.authority;
   const identity = itemOf(a.identityVerification);
   const grantEvidence = itemOf(a.grantedPermissions?.evidence);
-  const approvals = a.approvals.map((ap) => ({ approverId: ap.approverId, evidence: ap.claim.item }));
-  // an unnamed human-approval record is an approval by "someone", never by the actor
-  if (a.humanApproval) approvals.push({ approverId: '(unnamed human approver)', evidence: a.humanApproval.item });
   return {
     now,
     actor: a.actor ?? UNIDENTIFIED_ACTOR,
@@ -170,8 +148,6 @@ export function toAuthorityInput(b: EvidenceBundle, now: string): AuthorityAsses
     ...(a.requiredRoles.length > 0 ? { requiredRoles: a.requiredRoles } : {}),
     ...(a.requiredPermissions.length > 0 ? { requiredPermissions: a.requiredPermissions } : {}),
     ...(a.grantedPermissions ? { granted: { permissions: a.grantedPermissions.permissions, ...(grantEvidence ? { evidence: grantEvidence } : {}) } } : {}),
-    ...(a.requiredApprovals > 0 ? { requiredApprovals: a.requiredApprovals } : {}),
-    ...(approvals.length > 0 ? { approvals } : {}),
   };
 }
 

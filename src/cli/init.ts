@@ -26,6 +26,18 @@ import type { ProviderId } from '../core/types.js';
 import type { ProviderConfigEntry } from '../config/projectSchema.js';
 import { DEFAULT_SETTINGS } from '../config/schema.js';
 import { DEFAULT_LOCAL_TIMEOUT_MS, isProviderId, providerMeta } from '../providers/registry.js';
+import { StrictCliError } from '../features/action-safety/strict/files.js';
+import { readProjectAuthorization } from '../features/action-safety/strict/projectAuthorization.js';
+import {
+  askWhetherToAuthorize,
+  authorizationRequested,
+  createReadlinePrompter,
+  runAuthorizationSetup,
+  showExistingAuthorization,
+  validateAuthorizationFlags,
+  type AuthPrompter,
+  type AuthorizationFlags,
+} from './initAuthorization.js';
 
 export interface InitOptions {
   cwd: string;
@@ -41,6 +53,61 @@ export interface InitOptions {
   timeoutMs?: number;
   reset?: boolean;
   nonInteractive?: boolean;
+  /** Feature 4: administrator-led authorization setup (all optional; without them init behaves as before) */
+  authorization?: AuthorizationFlags;
+  /** replaces the terminal prompts of the authorization step (tests) */
+  authPrompter?: AuthPrompter;
+  /** injectable clock for the authorization step (tests) */
+  now?: () => Date;
+}
+
+/**
+ * Feature 4 authorization step, run AFTER the provider configuration. Never touches the provider configuration, so
+ * its failure cannot damage it. Runs when flags ask for it, or (interactive sessions only) when the administrator says yes.
+ */
+async function authorizationStep(opts: InitOptions): Promise<void> {
+  const flags = opts.authorization ?? {};
+  const interactive = !opts.nonInteractive && (opts.authPrompter !== undefined || (process.stdin.isTTY === true && process.stdout.isTTY === true));
+  let closer: { close(): void } | undefined;
+  let prompter = opts.authPrompter;
+  try {
+    // an existing certificate is only shown, never regenerated or replaced by init (also not by --reset)
+    const base = { cwd: opts.cwd, flags, now: (opts.now ?? (() => new Date()))() };
+    try {
+      if (await readProjectAuthorization(opts.cwd)) {
+        if (!(await showExistingAuthorization(base))) process.exitCode = 1;
+        return;
+      }
+    } catch (err) {
+      if (err instanceof StrictCliError) {
+        process.stderr.write(`[codexrev] ${err.message}
+`);
+        process.exitCode = 1;
+        return;
+      }
+      throw err;
+    }
+    if (interactive && !prompter) {
+      const rl = createReadlinePrompter();
+      prompter = rl;
+      closer = rl;
+    }
+    const ctx = { ...base, ...(interactive && prompter ? { prompter } : {}) };
+    if (!authorizationRequested(flags)) {
+      if (!interactive || !(await askWhetherToAuthorize(ctx))) return;
+    } else if (!interactive) {
+      const problem = validateAuthorizationFlags(flags);
+      if (problem) {
+        process.stderr.write(`[codexrev] ${problem}
+`);
+        process.exitCode = 2;
+        return;
+      }
+    }
+    if (!(await runAuthorizationSetup(ctx))) process.exitCode = 1;
+  } finally {
+    closer?.close();
+  }
 }
 
 function defaultModelFor(provider: ProviderId): string {
@@ -69,7 +136,19 @@ export async function runInit(opts: InitOptions): Promise<void> {
   if (existing && !opts.reset) {
     console.log(`[codexrev] config already exists at ${projectConfigPath(opts.cwd)}`);
     console.log(`[codexrev] re-run with --reset to replace it.`);
+    // the provider configuration is left exactly as it is; only the authorization step may still run
+    await authorizationStep(opts);
     return;
+  }
+
+  // Check the shape of authorization flags BEFORE writing anything (non-interactive only).
+  if (opts.nonInteractive && authorizationRequested(opts.authorization ?? {})) {
+    const problem = validateAuthorizationFlags(opts.authorization ?? {});
+    if (problem) {
+      process.stderr.write(`[codexrev] ${problem}\n`);
+      process.exitCode = 2;
+      return;
+    }
   }
 
   // Resolve inputs.
@@ -202,6 +281,9 @@ export async function runInit(opts: InitOptions): Promise<void> {
     model: cfg.model,
     projectRoot: opts.cwd,
   });
+
+  // Feature 4: administrator-led authorization (opt-in). The provider configuration above is already saved and stays valid.
+  await authorizationStep(opts);
 }
 
 async function runInteractiveWizard(seed: {

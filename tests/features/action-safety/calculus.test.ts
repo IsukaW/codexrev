@@ -206,7 +206,7 @@ describe('calculateSafetyScore', () => {
       evidence: { buildTests: { status: 'FAIL' } },
       policy: {
         authorization: { required: true },
-        humanApproval: { required: false },
+       
         recovery: { required: false, whenIrreversible: false },
         buildTests: { required: true },
         supportingEvidence: { required: false },

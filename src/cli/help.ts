@@ -136,6 +136,9 @@ export function renderHelp(): void {
     ['--timeout-ms', '<n>', 'Request timeout (default: 30 min auto for local providers)'],
     ['--reset', '', 'Replace existing config'],
     ['--non-interactive', '', 'Skip TUI wizard (CI / scripting)'],
+    ['--employee-id', '<id>', 'Feature 4: employee id for the signed certificate (scripted onboarding)'],
+    ['--employee-name', '<name>', 'Feature 4: employee name'],
+    ['--level', '<L1-L5>', 'Feature 4: authorization level (scripted onboarding; needs the provisioned signing credentials)'],
   ];
   for (const [flag, arg, desc] of initRows) writeRow(flag, arg, desc);
 
@@ -240,6 +243,8 @@ export function renderHelp(): void {
     ['--diff', '<ref>', 'Git revision to compare'],
     ['--output', '<path>', 'Evidence Pack output destination'],
     ['--file', '<path>', 'Evidence Pack to verify (safety verify)'],
+    ['--strict', '', 'assess: verify the administrator-signed grant saved by `codexrev init`'],
+    ['--app', '<name>', 'assess --strict: application name (default: project folder name)'],
   ];
   for (const [flag, arg, desc] of safetyRows) writeRow(flag, arg, desc);
 

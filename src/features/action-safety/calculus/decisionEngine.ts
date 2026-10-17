@@ -105,7 +105,6 @@ export interface ActionDecisionResult {
 
 const GATE_IDS_RECORD: Readonly<Record<GateId, true>> = {
   AUTHORIZATION: true,
-  HUMAN_APPROVAL: true,
   VERIFIED_RECOVERY: true,
   BUILD_TEST_RESULTS: true,
   SUPPORTING_EVIDENCE: true,

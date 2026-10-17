@@ -35,7 +35,7 @@ beforeAll(async () => {
       actor: { id: 'alice', kind: 'human', roles: ['developer'] },
       authority: {
         identityVerification: attested(), authorization: attested(), requiredRoles: ['developer'], requiredPermissions: ['deploy'],
-        grantedPermissions: { permissions: ['deploy'], evidence: attested() }, requiredApprovals: 1, approvals: [{ approverId: 'bob', evidence: attested() }],
+        grantedPermissions: { permissions: ['deploy'], evidence: attested() },
       },
       reports: { buildTests: ['reports/tests.json'], security: ['reports/sec.sarif'] },
       recovery: { rollbackPlan: attested(), rollbackTest: attested(), backup: attested() },

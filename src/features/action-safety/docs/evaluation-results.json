@@ -1,0 +1,896 @@
+{
+  "generatedAt": "2026-10-17T07:03:24.976Z",
+  "environment": {
+    "node": "v22.14.0",
+    "platform": "win32 10.0.26200",
+    "cpu": "Intel(R) Core(TM) Ultra 7 155H",
+    "cores": 22,
+    "memoryGb": 31.5
+  },
+  "methodology": {
+    "demoRepetitions": 3,
+    "timingRuns": 10,
+    "warmUpRunsDiscarded": 1,
+    "clock": "fixed for decisions (reproducible); wall-clock performance.now() for durations",
+    "interpretation": "local-model interpretation disabled (advisory, not part of authorization); no network or model is used"
+  },
+  "functional": {
+    "repetitions": 3,
+    "scenarioCount": 15,
+    "correctPerRepetition": [
+      15,
+      15,
+      15
+    ],
+    "decisionCoverage": {
+      "ALLOW": 2,
+      "BLOCK": 9,
+      "ESCALATE": 1,
+      "VALID": 1,
+      "INVALID": 2
+    },
+    "consistentAcrossRepetitions": true,
+    "scenarios": [
+      {
+        "id": 1,
+        "title": "Authorized developer, safe code change",
+        "expected": "ALLOW (exit 0)",
+        "observed": "ALLOW (exit 0)",
+        "ok": true,
+        "safetyScore": 0.89
+      },
+      {
+        "id": 2,
+        "title": "Authorized release engineer, production deployment without a separate approval",
+        "expected": "ALLOW (exit 0)",
+        "observed": "ALLOW (exit 0)",
+        "ok": true,
+        "safetyScore": 0.83
+      },
+      {
+        "id": 3,
+        "title": "Developer without the production permission",
+        "expected": "BLOCK (exit 11)",
+        "observed": "BLOCK (exit 11)",
+        "ok": true,
+        "safetyScore": 0.58
+      },
+      {
+        "id": 4,
+        "title": "Action outside the grant's permission scope",
+        "expected": "BLOCK (exit 11)",
+        "observed": "BLOCK (exit 11)",
+        "ok": true,
+        "safetyScore": 0.58
+      },
+      {
+        "id": 5,
+        "title": "Tampered developer grant",
+        "expected": "BLOCK (exit 11)",
+        "observed": "BLOCK (exit 11)",
+        "ok": true,
+        "safetyScore": 0.58
+      },
+      {
+        "id": 6,
+        "title": "Expired grant",
+        "expected": "BLOCK (exit 11)",
+        "observed": "BLOCK (exit 11)",
+        "ok": true,
+        "safetyScore": 0.61
+      },
+      {
+        "id": 7,
+        "title": "Revoked grant",
+        "expected": "BLOCK (exit 11)",
+        "observed": "BLOCK (exit 11)",
+        "ok": true,
+        "safetyScore": 0.64
+      },
+      {
+        "id": 8,
+        "title": "Forged administrator signature",
+        "expected": "BLOCK (exit 11)",
+        "observed": "BLOCK (exit 11)",
+        "ok": true,
+        "safetyScore": 0.58
+      },
+      {
+        "id": 9,
+        "title": "Self-declared authority in JSON",
+        "expected": "BLOCK (exit 11)",
+        "observed": "BLOCK (exit 11)",
+        "ok": true,
+        "safetyScore": 0.58
+      },
+      {
+        "id": 10,
+        "title": "Git commit changes before finalization",
+        "expected": "BLOCK (exit 11)",
+        "observed": "BLOCK (exit 11)",
+        "ok": true,
+        "safetyScore": 0.58
+      },
+      {
+        "id": 11,
+        "title": "Authorized action with an intermediate Safety Score",
+        "expected": "ESCALATE (exit 10)",
+        "observed": "ESCALATE (exit 10)",
+        "ok": true,
+        "safetyScore": 0.73
+      },
+      {
+        "id": 12,
+        "title": "Authorized action with a failed mandatory gate",
+        "expected": "BLOCK (exit 11)",
+        "observed": "BLOCK (exit 11)",
+        "ok": true,
+        "safetyScore": 0.71
+      },
+      {
+        "id": 13,
+        "title": "A genuine signed Evidence Pack verifies offline",
+        "expected": "VALID (exit 0)",
+        "observed": "VALID (exit 0)",
+        "ok": true,
+        "safetyScore": null
+      },
+      {
+        "id": 14,
+        "title": "Tampered Evidence Pack fails offline verification",
+        "expected": "INVALID (exit 1)",
+        "observed": "INVALID (exit 1)",
+        "ok": true,
+        "safetyScore": null
+      },
+      {
+        "id": 15,
+        "title": "Evidence Pack checked against an untrusted key",
+        "expected": "INVALID (exit 1)",
+        "observed": "INVALID (exit 1)",
+        "ok": true,
+        "safetyScore": null
+      }
+    ]
+  },
+  "authorization": {
+    "attackCount": 17,
+    "attacksAllowed": 0,
+    "controlCount": 2,
+    "controlsAllowed": 2,
+    "attacks": [
+      {
+        "id": "A01",
+        "category": "authorization",
+        "description": "developer without the production permission",
+        "decision": "BLOCK",
+        "exitCode": 11,
+        "allowed": false,
+        "firstReason": "Role: the requester holds no role the policy allows for this action [role_missing]",
+        "reasons": [
+          "Role: the requester holds no role the policy allows for this action [role_missing]",
+          "Permission: the requester lacks a permission the policy requires [permission_missing]"
+        ],
+        "specificCauseNamed": true,
+        "evidencePackAuthorizationStatus": "DENIED"
+      },
+      {
+        "id": "A02",
+        "category": "authorization",
+        "description": "L4 grant narrowed (permissionScope) to code.modify, attempting a production deployment",
+        "decision": "BLOCK",
+        "exitCode": 11,
+        "allowed": false,
+        "firstReason": "Permission: the requester lacks a permission the policy requires [permission_missing]",
+        "reasons": [
+          "Permission: the requester lacks a permission the policy requires [permission_missing]"
+        ],
+        "specificCauseNamed": true,
+        "evidencePackAuthorizationStatus": "DENIED"
+      },
+      {
+        "id": "A03",
+        "category": "tampering",
+        "description": "developer grant edited by the developer (level raised, longer expiry)",
+        "decision": "BLOCK",
+        "exitCode": 11,
+        "allowed": false,
+        "firstReason": "Developer grant invalid: no valid grant for this key (1 grant file(s) checked; refused: signature_verification_failed) [DEVELOPER_GRANT_INVALID]",
+        "reasons": [
+          "Developer grant invalid: no valid grant for this key (1 grant file(s) checked; refused: signature_verification_failed) [DEVELOPER_GRANT_INVALID]"
+        ],
+        "specificCauseNamed": true,
+        "evidencePackAuthorizationStatus": "NOT_ESTABLISHED"
+      },
+      {
+        "id": "A04",
+        "category": "tampering",
+        "description": "grant for alice re-signed by a key that is not an administrator key (forged administrator signature)",
+        "decision": "BLOCK",
+        "exitCode": 11,
+        "allowed": false,
+        "firstReason": "Developer grant invalid: no valid grant for this key (1 grant file(s) checked; refused: unknown_signing_key) [DEVELOPER_GRANT_INVALID]",
+        "reasons": [
+          "Developer grant invalid: no valid grant for this key (1 grant file(s) checked; refused: unknown_signing_key) [DEVELOPER_GRANT_INVALID]"
+        ],
+        "specificCauseNamed": true,
+        "evidencePackAuthorizationStatus": "NOT_ESTABLISHED"
+      },
+      {
+        "id": "A05",
+        "category": "tampering",
+        "description": "grant for alice signed by the challenge-store key (a trusted key, but not for grants)",
+        "decision": "BLOCK",
+        "exitCode": 11,
+        "allowed": false,
+        "firstReason": "Developer grant invalid: no valid grant for this key (1 grant file(s) checked; refused: key_purpose_not_allowed) [DEVELOPER_GRANT_INVALID]",
+        "reasons": [
+          "Developer grant invalid: no valid grant for this key (1 grant file(s) checked; refused: key_purpose_not_allowed) [DEVELOPER_GRANT_INVALID]"
+        ],
+        "specificCauseNamed": true,
+        "evidencePackAuthorizationStatus": "NOT_ESTABLISHED"
+      },
+      {
+        "id": "A06",
+        "category": "authorization",
+        "description": "developer whose grant was revoked",
+        "decision": "BLOCK",
+        "exitCode": 11,
+        "allowed": false,
+        "firstReason": "Revocation: the requester grant is revoked [grant_revoked]",
+        "reasons": [
+          "Revocation: the requester grant is revoked [grant_revoked]"
+        ],
+        "specificCauseNamed": true,
+        "evidencePackAuthorizationStatus": "DENIED"
+      },
+      {
+        "id": "A07",
+        "category": "authorization",
+        "description": "developer whose grant has expired (clock two days after a 1-day grant)",
+        "decision": "BLOCK",
+        "exitCode": 11,
+        "allowed": false,
+        "firstReason": "Developer grant invalid: no valid grant for this key (5 grant file(s) checked; refused: grant_expired) [DEVELOPER_GRANT_INVALID]",
+        "reasons": [
+          "Developer grant invalid: no valid grant for this key (5 grant file(s) checked; refused: grant_expired) [DEVELOPER_GRANT_INVALID]"
+        ],
+        "specificCauseNamed": true,
+        "evidencePackAuthorizationStatus": "NOT_ESTABLISHED"
+      },
+      {
+        "id": "A08",
+        "category": "authorization",
+        "description": "JSON file claiming roles, authorization and disabled gates",
+        "decision": "BLOCK",
+        "exitCode": 11,
+        "allowed": false,
+        "firstReason": "Role: the requester holds no role the policy allows for this action [role_missing]",
+        "reasons": [
+          "Role: the requester holds no role the policy allows for this action [role_missing]",
+          "Permission: the requester lacks a permission the policy requires [permission_missing]"
+        ],
+        "specificCauseNamed": true,
+        "evidencePackAuthorizationStatus": "DENIED"
+      },
+      {
+        "id": "A09",
+        "category": "authorization",
+        "description": "a different person's private key presented for alice's grant",
+        "decision": "BLOCK",
+        "exitCode": 11,
+        "allowed": false,
+        "firstReason": "Wrong developer private key: the developer key \"bob\" is not the key in the signed grant for \"alice\" [DEVELOPER_KEY_MISMATCH]",
+        "reasons": [
+          "Wrong developer private key: the developer key \"bob\" is not the key in the signed grant for \"alice\" [DEVELOPER_KEY_MISMATCH]"
+        ],
+        "specificCauseNamed": true,
+        "evidencePackAuthorizationStatus": "NOT_ESTABLISHED"
+      },
+      {
+        "id": "A10",
+        "category": "trust anchor",
+        "description": "wrong pinned trust-root fingerprint",
+        "decision": "BLOCK",
+        "exitCode": 11,
+        "allowed": false,
+        "firstReason": "Trust anchor / signed organization data: the trust root does not match the pinned fingerprint: it is NOT the administrator-established trust root, so nothing signed under it is accepted",
+        "reasons": [
+          "Trust anchor / signed organization data: the trust root does not match the pinned fingerprint: it is NOT the administrator-established trust root, so nothing signed under it is accepted"
+        ],
+        "specificCauseNamed": false,
+        "evidencePackAuthorizationStatus": "NOT_ESTABLISHED"
+      },
+      {
+        "id": "A11",
+        "category": "trust anchor",
+        "description": "the whole authority directory replaced by an attacker's own organization",
+        "decision": "BLOCK",
+        "exitCode": 11,
+        "allowed": false,
+        "firstReason": "Trust anchor / signed organization data: the trust root does not match the pinned fingerprint: it is NOT the administrator-established trust root, so nothing signed under it is accepted",
+        "reasons": [
+          "Trust anchor / signed organization data: the trust root does not match the pinned fingerprint: it is NOT the administrator-established trust root, so nothing signed under it is accepted"
+        ],
+        "specificCauseNamed": false,
+        "evidencePackAuthorizationStatus": "NOT_ESTABLISHED"
+      },
+      {
+        "id": "A12",
+        "category": "tampering",
+        "description": "signed policy edited to let every role deploy to production",
+        "decision": "BLOCK",
+        "exitCode": 11,
+        "allowed": false,
+        "firstReason": "Trust anchor / signed organization data: the signed policy is not acceptable: the policy signature could not be verified",
+        "reasons": [
+          "Trust anchor / signed organization data: the signed policy is not acceptable: the policy signature could not be verified"
+        ],
+        "specificCauseNamed": false,
+        "evidencePackAuthorizationStatus": "NOT_ESTABLISHED"
+      },
+      {
+        "id": "A13",
+        "category": "two-phase",
+        "description": "Git commit changes between authorization and finalization",
+        "decision": "BLOCK",
+        "exitCode": 11,
+        "allowed": false,
+        "firstReason": "Git context changed since authorization (commit, tree, contentDigest): the action that was authorized is not the action that would run",
+        "reasons": [
+          "Git context changed since authorization (commit, tree, contentDigest): the action that was authorized is not the action that would run",
+          "Finalization: the safety assessment did not ALLOW the action, so the challenge was not consumed [safety_not_allow]",
+          "Finalization: the safety assessment did not ALLOW the action, so the challenge was not consumed [safety_not_allow]"
+        ],
+        "specificCauseNamed": true,
+        "evidencePackAuthorizationStatus": "DENIED"
+      },
+      {
+        "id": "A14",
+        "category": "two-phase",
+        "description": "the challenge store loses the challenge before consumption",
+        "decision": "BLOCK",
+        "exitCode": 11,
+        "allowed": false,
+        "firstReason": "Challenge consumption failed: no verified signed receipt [transport_unavailable]",
+        "reasons": [
+          "Challenge consumption failed: no verified signed receipt [transport_unavailable]",
+          "Challenge consumption: the challenge store did not give a clear answer [challenge_store_unavailable]"
+        ],
+        "specificCauseNamed": true,
+        "evidencePackAuthorizationStatus": "INCOMPLETE"
+      },
+      {
+        "id": "A15",
+        "category": "authorization",
+        "description": "a key with no administrator-signed grant at all",
+        "decision": "BLOCK",
+        "exitCode": 11,
+        "allowed": false,
+        "firstReason": "Developer grant missing: no administrator-signed grant exists for the key \"mallory\" [DEVELOPER_GRANT_MISSING]",
+        "reasons": [
+          "Developer grant missing: no administrator-signed grant exists for the key \"mallory\" [DEVELOPER_GRANT_MISSING]"
+        ],
+        "specificCauseNamed": true,
+        "evidencePackAuthorizationStatus": "NOT_ESTABLISHED"
+      },
+      {
+        "id": "A16",
+        "category": "safety bypass",
+        "description": "authorized release engineer with no build/test report (mandatory gate fails)",
+        "decision": "BLOCK",
+        "exitCode": 11,
+        "allowed": false,
+        "firstReason": "Authorization is verified but NOT finalized: the safety assessment did not ALLOW the action, so the challenge was not consumed.",
+        "reasons": [
+          "Authorization is verified but NOT finalized: the safety assessment did not ALLOW the action, so the challenge was not consumed."
+        ],
+        "specificCauseNamed": false,
+        "evidencePackAuthorizationStatus": "VERIFIED_NOT_FINALIZED"
+      },
+      {
+        "id": "A17",
+        "category": "safety bypass",
+        "description": "authorized release engineer with a very large stated blast radius (intermediate Safety Score)",
+        "decision": "ESCALATE",
+        "exitCode": 10,
+        "allowed": false,
+        "firstReason": "Authorization is verified but NOT finalized: the safety assessment did not ALLOW the action, so the challenge was not consumed.",
+        "reasons": [
+          "Authorization is verified but NOT finalized: the safety assessment did not ALLOW the action, so the challenge was not consumed."
+        ],
+        "specificCauseNamed": false,
+        "evidencePackAuthorizationStatus": "VERIFIED_NOT_FINALIZED"
+      }
+    ]
+  },
+  "evidenceIntegrity": {
+    "genuineVerifies": true,
+    "tamperCount": 29,
+    "tamperDetected": 29,
+    "untrustedSignerRejected": true,
+    "cases": [
+      {
+        "id": "signed decision edited after signing, without the signing key",
+        "detected": true,
+        "signature": "INVALID",
+        "signer": "NOT_ESTABLISHED",
+        "payloadIntegrity": "FAILED",
+        "reason": "Signed content has been modified, or the signature is not from the trusted key"
+      },
+      {
+        "id": "readable copy of decision edited",
+        "detected": true,
+        "signature": "VALID",
+        "signer": "TRUSTED",
+        "payloadIntegrity": "FAILED",
+        "reason": "The human-readable copy differs from the signed record"
+      },
+      {
+        "id": "signed safety score edited after signing, without the signing key",
+        "detected": true,
+        "signature": "INVALID",
+        "signer": "NOT_ESTABLISHED",
+        "payloadIntegrity": "FAILED",
+        "reason": "Signed content has been modified, or the signature is not from the trusted key"
+      },
+      {
+        "id": "readable copy of safety score edited",
+        "detected": true,
+        "signature": "VALID",
+        "signer": "TRUSTED",
+        "payloadIntegrity": "FAILED",
+        "reason": "The human-readable copy differs from the signed record"
+      },
+      {
+        "id": "signed a gate result edited after signing, without the signing key",
+        "detected": true,
+        "signature": "INVALID",
+        "signer": "NOT_ESTABLISHED",
+        "payloadIntegrity": "FAILED",
+        "reason": "Signed content has been modified, or the signature is not from the trusted key"
+      },
+      {
+        "id": "readable copy of a gate result edited",
+        "detected": true,
+        "signature": "VALID",
+        "signer": "TRUSTED",
+        "payloadIntegrity": "FAILED",
+        "reason": "The human-readable copy differs from the signed record"
+      },
+      {
+        "id": "signed Git commit edited after signing, without the signing key",
+        "detected": true,
+        "signature": "INVALID",
+        "signer": "NOT_ESTABLISHED",
+        "payloadIntegrity": "FAILED",
+        "reason": "Signed content has been modified, or the signature is not from the trusted key"
+      },
+      {
+        "id": "readable copy of Git commit edited",
+        "detected": true,
+        "signature": "VALID",
+        "signer": "TRUSTED",
+        "payloadIntegrity": "FAILED",
+        "reason": "The human-readable copy differs from the signed record"
+      },
+      {
+        "id": "signed content digest edited after signing, without the signing key",
+        "detected": true,
+        "signature": "INVALID",
+        "signer": "NOT_ESTABLISHED",
+        "payloadIntegrity": "FAILED",
+        "reason": "Signed content has been modified, or the signature is not from the trusted key"
+      },
+      {
+        "id": "readable copy of content digest edited",
+        "detected": true,
+        "signature": "VALID",
+        "signer": "TRUSTED",
+        "payloadIntegrity": "FAILED",
+        "reason": "The human-readable copy differs from the signed record"
+      },
+      {
+        "id": "signed developer identity edited after signing, without the signing key",
+        "detected": true,
+        "signature": "INVALID",
+        "signer": "NOT_ESTABLISHED",
+        "payloadIntegrity": "FAILED",
+        "reason": "Signed content has been modified, or the signature is not from the trusted key"
+      },
+      {
+        "id": "readable copy of developer identity edited",
+        "detected": true,
+        "signature": "VALID",
+        "signer": "TRUSTED",
+        "payloadIntegrity": "FAILED",
+        "reason": "The human-readable copy differs from the signed record"
+      },
+      {
+        "id": "signed grant id edited after signing, without the signing key",
+        "detected": true,
+        "signature": "INVALID",
+        "signer": "NOT_ESTABLISHED",
+        "payloadIntegrity": "FAILED",
+        "reason": "Signed content has been modified, or the signature is not from the trusted key"
+      },
+      {
+        "id": "readable copy of grant id edited",
+        "detected": true,
+        "signature": "VALID",
+        "signer": "TRUSTED",
+        "payloadIntegrity": "FAILED",
+        "reason": "The human-readable copy differs from the signed record"
+      },
+      {
+        "id": "signed gate list edited after signing, without the signing key",
+        "detected": true,
+        "signature": "INVALID",
+        "signer": "NOT_ESTABLISHED",
+        "payloadIntegrity": "FAILED",
+        "reason": "Signed content has been modified, or the signature is not from the trusted key"
+      },
+      {
+        "id": "readable copy of gate list edited",
+        "detected": true,
+        "signature": "VALID",
+        "signer": "TRUSTED",
+        "payloadIntegrity": "FAILED",
+        "reason": "The human-readable copy differs from the signed record"
+      },
+      {
+        "id": "signed timestamp edited after signing, without the signing key",
+        "detected": true,
+        "signature": "INVALID",
+        "signer": "NOT_ESTABLISHED",
+        "payloadIntegrity": "FAILED",
+        "reason": "Signed content has been modified, or the signature is not from the trusted key"
+      },
+      {
+        "id": "readable copy of timestamp edited",
+        "detected": true,
+        "signature": "VALID",
+        "signer": "TRUSTED",
+        "payloadIntegrity": "FAILED",
+        "reason": "The human-readable copy differs from the signed record"
+      },
+      {
+        "id": "signed assessment id edited after signing, without the signing key",
+        "detected": true,
+        "signature": "INVALID",
+        "signer": "NOT_ESTABLISHED",
+        "payloadIntegrity": "FAILED",
+        "reason": "Signed content has been modified, or the signature is not from the trusted key"
+      },
+      {
+        "id": "readable copy of assessment id edited",
+        "detected": true,
+        "signature": "VALID",
+        "signer": "TRUSTED",
+        "payloadIntegrity": "FAILED",
+        "reason": "The human-readable copy differs from the signed record"
+      },
+      {
+        "id": "signature bit flipped",
+        "detected": true,
+        "signature": "INVALID",
+        "signer": "NOT_ESTABLISHED",
+        "payloadIntegrity": "FAILED",
+        "reason": "Signed content has been modified, or the signature is not from the trusted key"
+      },
+      {
+        "id": "signature removed",
+        "detected": true,
+        "signature": "MISSING",
+        "signer": "NOT_ESTABLISHED",
+        "payloadIntegrity": "NOT_CHECKED",
+        "reason": "The Evidence Pack has no signature"
+      },
+      {
+        "id": "version 1 pack (five gates and approvals) is not reinterpreted",
+        "detected": true,
+        "signature": "NOT_CHECKED",
+        "signer": "NOT_ESTABLISHED",
+        "payloadIntegrity": "NOT_CHECKED",
+        "reason": "Unsupported Evidence Pack version 1: it records five gates and per-action approvals, which the current four-gate design does not use. It is not reinterpreted; create a new pack by assessing the action again"
+      },
+      {
+        "id": "unknown future version",
+        "detected": true,
+        "signature": "NOT_CHECKED",
+        "signer": "NOT_ESTABLISHED",
+        "payloadIntegrity": "NOT_CHECKED",
+        "reason": "Unsupported Evidence Pack version"
+      },
+      {
+        "id": "not JSON",
+        "detected": true,
+        "signature": "NOT_CHECKED",
+        "signer": "NOT_ESTABLISHED",
+        "payloadIntegrity": "NOT_CHECKED",
+        "reason": "The Evidence Pack is not valid JSON"
+      },
+      {
+        "id": "signed by an untrusted key",
+        "detected": true,
+        "signature": "NOT_CHECKED",
+        "signer": "UNTRUSTED",
+        "payloadIntegrity": "NOT_CHECKED",
+        "reason": "The pack was signed by a key that is not the trusted signing key"
+      },
+      {
+        "id": "signed with a different grant-domain signature",
+        "detected": true,
+        "signature": "INVALID",
+        "signer": "NOT_ESTABLISHED",
+        "payloadIntegrity": "FAILED",
+        "reason": "The signed envelope is not valid (domain_mismatch)"
+      },
+      {
+        "id": "trusted key signs a record that still lists the Human Approval gate",
+        "detected": true,
+        "signature": "VALID",
+        "signer": "TRUSTED",
+        "payloadIntegrity": "FAILED",
+        "reason": "a gate entry is malformed"
+      },
+      {
+        "id": "trusted key signs an ALLOW without finalized authorization",
+        "detected": true,
+        "signature": "VALID",
+        "signer": "TRUSTED",
+        "payloadIntegrity": "FAILED",
+        "reason": "The signed record is internally inconsistent: authorization is FINALIZED exactly when the challenge was consumed with a verified receipt"
+      }
+    ]
+  },
+  "performance": {
+    "unit": "milliseconds",
+    "developmentAssessment": {
+      "n": 10,
+      "meanMs": 1937.7,
+      "stdDevMs": 45.1,
+      "minMs": 1829.5,
+      "medianMs": 1948.6,
+      "maxMs": 1981.1,
+      "samplesMs": [
+        1951.8,
+        1945.3,
+        1981.1,
+        1925.1,
+        1829.5,
+        1975.3,
+        1979.1,
+        1914.6,
+        1919.4,
+        1956.1
+      ]
+    },
+    "productionAssessment": {
+      "n": 10,
+      "meanMs": 1956.5,
+      "stdDevMs": 96.1,
+      "minMs": 1844.9,
+      "medianMs": 1927.7,
+      "maxMs": 2169.5,
+      "samplesMs": [
+        1908,
+        1866.3,
+        1968.9,
+        1844.9,
+        1927.6,
+        2047.4,
+        1903.7,
+        2000.5,
+        2169.5,
+        1927.8
+      ]
+    },
+    "productionAssessmentWithEvidencePack": {
+      "n": 10,
+      "meanMs": 2059.3,
+      "stdDevMs": 66.1,
+      "minMs": 1973.4,
+      "medianMs": 2034.5,
+      "maxMs": 2150.4,
+      "samplesMs": [
+        2136.5,
+        2150.4,
+        2025.9,
+        2017.8,
+        2043.1,
+        2132,
+        2106.3,
+        2025.5,
+        1982.2,
+        1973.4
+      ]
+    },
+    "evidencePackVerification": {
+      "n": 30,
+      "meanMs": 5.2,
+      "stdDevMs": 0.9,
+      "minMs": 2.9,
+      "medianMs": 5.2,
+      "maxMs": 6.8,
+      "samplesMs": [
+        3.8,
+        5.1,
+        4.6,
+        5.6,
+        4.6,
+        4.5,
+        5,
+        5.4,
+        4.7,
+        4.2,
+        5.2,
+        6.4,
+        6.6,
+        6.8,
+        6.2,
+        5.4,
+        5.4,
+        5.1,
+        5.8,
+        6.5,
+        6.1,
+        4.9,
+        5.2,
+        4.7,
+        5.4,
+        5.2,
+        4.5,
+        5.1,
+        4.4,
+        2.9
+      ]
+    },
+    "partGitContextCollection": {
+      "n": 10,
+      "meanMs": 590.6,
+      "stdDevMs": 87.2,
+      "minMs": 505.3,
+      "medianMs": 567.9,
+      "maxMs": 794.1,
+      "samplesMs": [
+        516.8,
+        579.3,
+        562.5,
+        598.7,
+        549.5,
+        541.5,
+        505.3,
+        684.7,
+        794.1,
+        573.3
+      ]
+    },
+    "partEvidenceCollection": {
+      "n": 10,
+      "meanMs": 764.8,
+      "stdDevMs": 107.6,
+      "minMs": 702,
+      "medianMs": 738.1,
+      "maxMs": 1065.4,
+      "samplesMs": [
+        738.7,
+        709.9,
+        719.3,
+        741.4,
+        712.5,
+        737.6,
+        767.2,
+        1065.4,
+        753.9,
+        702
+      ]
+    }
+  },
+  "explainability": {
+    "nonAllowCount": 10,
+    "withMeaningfulReason": 10,
+    "authorizationFailures": 8,
+    "safetyFailures": 2,
+    "classifiedCorrectly": 10,
+    "evidencePackStatusCounts": {
+      "DENIED": 5,
+      "NOT_ESTABLISHED": 9,
+      "INCOMPLETE": 1,
+      "VERIFIED_NOT_FINALIZED": 4
+    },
+    "attackReportsNamingSpecificCause": 12,
+    "attackReportCount": 17,
+    "cases": [
+      {
+        "id": 3,
+        "decision": "BLOCK",
+        "kind": "authorization failure",
+        "authorizationState": "BLOCKED (authorization",
+        "hasReason": true,
+        "firstReason": "Role: the requester holds no role the policy allows for this action [role_missing]"
+      },
+      {
+        "id": 4,
+        "decision": "BLOCK",
+        "kind": "authorization failure",
+        "authorizationState": "BLOCKED (authorization",
+        "hasReason": true,
+        "firstReason": "Permission: the requester lacks a permission the policy requires [permission_missing]"
+      },
+      {
+        "id": 5,
+        "decision": "BLOCK",
+        "kind": "authorization failure",
+        "authorizationState": "BLOCKED (authorization",
+        "hasReason": true,
+        "firstReason": "Developer grant invalid: no valid grant for this key (1 grant file(s) checked; refused: signature_verification_failed) [DEVELOPER_GRANT_INVALID]"
+      },
+      {
+        "id": 6,
+        "decision": "BLOCK",
+        "kind": "authorization failure",
+        "authorizationState": "BLOCKED (authorization",
+        "hasReason": true,
+        "firstReason": "Developer grant invalid: no valid grant for this key (5 grant file(s) checked; refused: grant_expired) [DEVELOPER_GRANT_INVALID]"
+      },
+      {
+        "id": 7,
+        "decision": "BLOCK",
+        "kind": "authorization failure",
+        "authorizationState": "BLOCKED (authorization",
+        "hasReason": true,
+        "firstReason": "Revocation: the requester grant is revoked [grant_revoked]"
+      },
+      {
+        "id": 8,
+        "decision": "BLOCK",
+        "kind": "authorization failure",
+        "authorizationState": "BLOCKED (authorization",
+        "hasReason": true,
+        "firstReason": "Developer grant invalid: no valid grant for this key (1 grant file(s) checked; refused: unknown_signing_key) [DEVELOPER_GRANT_INVALID]"
+      },
+      {
+        "id": 9,
+        "decision": "BLOCK",
+        "kind": "authorization failure",
+        "authorizationState": "BLOCKED (authorization",
+        "hasReason": true,
+        "firstReason": "Role: the requester holds no role the policy allows for this action [role_missing]"
+      },
+      {
+        "id": 10,
+        "decision": "BLOCK",
+        "kind": "authorization failure",
+        "authorizationState": "BLOCKED (authorization",
+        "hasReason": true,
+        "firstReason": "Git context changed since authorization (commit, tree, contentDigest): the action that was authorized is not the action that would run"
+      },
+      {
+        "id": 11,
+        "decision": "ESCALATE",
+        "kind": "safety failure",
+        "authorizationState": "NOT FINALIZED",
+        "hasReason": true,
+        "firstReason": "Authorization is verified but NOT finalized: the safety assessment did not ALLOW the action, so the challenge was not consumed."
+      },
+      {
+        "id": 12,
+        "decision": "BLOCK",
+        "kind": "safety failure",
+        "authorizationState": "NOT FINALIZED",
+        "hasReason": true,
+        "firstReason": "Authorization is verified but NOT finalized: the safety assessment did not ALLOW the action, so the challenge was not consumed."
+      }
+    ]
+  },
+  "limitations": [
+    "small, hand-designed scenario set: it shows the implementation matches its design on these cases, not that no other case exists",
+    "timings come from one machine, a fixed clock and a local disk; they include process-internal work only, not a separately started program",
+    "the sample is small: no claim of statistical significance is made",
+    "the attacker model is a developer who can edit files and run the tool; an attacker who can modify the executable, the pin or the operating system is out of scope",
+    "the challenge store is in-process, so replay protection is local",
+    "safety weights and thresholds are provisional research values",
+    "authorization decisions are not compared with a human gold standard; \"correct\" means \"as designed\""
+  ]
+}

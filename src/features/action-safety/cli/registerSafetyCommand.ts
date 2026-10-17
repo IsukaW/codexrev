@@ -32,6 +32,14 @@ export function safetyCommandBuilder<T>(y: Argv<T>): Argv<T> {
         .option('output', {
           type: 'string',
           describe: 'Where to write the Evidence Pack',
+        })
+        .option('strict', {
+          type: 'boolean',
+          describe: 'Verify the administrator-signed grant saved by `codexrev init` before assessing (never trusts claims in the input file)',
+        })
+        .option('app', {
+          type: 'string',
+          describe: 'Application name for --strict (default: the project folder name)',
         }),
     )
     .command('verify', 'Verify a signed Evidence Pack', (yy) =>

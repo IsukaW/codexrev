@@ -61,22 +61,13 @@ export interface InputEvidence extends EvidenceSnapshot {
   readonly securityFindings?: EvidenceItem;
 }
 
-export interface InputApproval {
-  readonly approverId: string;
-  /** PASS = approved, FAIL = explicitly rejected */
-  readonly evidence: EvidenceItem;
-}
-
 export interface InputAuthority {
   readonly authorization?: EvidenceItem;
-  readonly humanApproval?: EvidenceItem;
   /** proof of who the actor is */
   readonly identityVerification?: EvidenceItem;
   readonly requiredRoles?: readonly string[];
   readonly requiredPermissions?: readonly string[];
   readonly grantedPermissions?: { readonly permissions: readonly string[]; readonly evidence?: EvidenceItem };
-  readonly requiredApprovals?: number;
-  readonly approvals?: readonly InputApproval[];
 }
 
 /** Paths (inside the project) of report files that already exist. Nothing is run to produce them. */
@@ -265,7 +256,7 @@ function consequence(at: string, x: unknown): 'BLOCK' | 'ESCALATE' {
 
 // every gate rule must be stated: there is deliberately no default policy
 function gatePolicy(at: string, x: unknown): GatePolicy {
-  const r = record(at, x, ['authorization', 'humanApproval', 'recovery', 'buildTests', 'supportingEvidence']);
+  const r = record(at, x, ['authorization', 'recovery', 'buildTests', 'supportingEvidence']);
   const rule = (key: string, extra: readonly string[]): Rec => {
     if (r[key] === undefined) fail(`${at}.${key}`, 'required: every gate rule must be stated explicitly');
     const rr = record(`${at}.${key}`, r[key], ['required', ...extra]);
@@ -273,16 +264,11 @@ function gatePolicy(at: string, x: unknown): GatePolicy {
     return rr;
   };
   const auth = rule('authorization', []);
-  const approval = rule('humanApproval', ['consequence']);
   const recovery = rule('recovery', ['whenIrreversible', 'minImpact']);
   const tests = rule('buildTests', []);
   const supporting = rule('supportingEvidence', ['consequence']);
   return {
     authorization: { required: auth.required as boolean },
-    humanApproval: {
-      required: approval.required as boolean,
-      ...(approval.consequence !== undefined ? { consequence: consequence(`${at}.humanApproval.consequence`, approval.consequence) } : {}),
-    },
     recovery: {
       required: recovery.required as boolean,
       whenIrreversible: bool(`${at}.recovery.whenIrreversible`, recovery.whenIrreversible),
@@ -300,8 +286,7 @@ function gatePolicy(at: string, x: unknown): GatePolicy {
 
 function parseAuthority(at: string, x: unknown): InputAuthority {
   const a = record(at, x, [
-    'authorization', 'humanApproval', 'identityVerification', 'requiredRoles', 'requiredPermissions',
-    'grantedPermissions', 'requiredApprovals', 'approvals',
+    'authorization', 'identityVerification', 'requiredRoles', 'requiredPermissions', 'grantedPermissions',
   ]);
   const item = (k: string): EvidenceItem | undefined => (a[k] !== undefined ? evidenceItem(`${at}.${k}`, a[k]) : undefined);
 
@@ -314,32 +299,14 @@ function parseAuthority(at: string, x: unknown): InputAuthority {
     };
   }
 
-  let approvals: InputApproval[] | undefined;
-  if (a.approvals !== undefined) {
-    if (!Array.isArray(a.approvals)) fail(`${at}.approvals`, 'expected an array');
-    if ((a.approvals as unknown[]).length > MAX_LIST) fail(`${at}.approvals`, `at most ${MAX_LIST} approval records are allowed`);
-    approvals = (a.approvals as unknown[]).map((raw, i) => {
-      const r = record(`${at}.approvals[${i}]`, raw, ['approverId', 'evidence']);
-      if (r.evidence === undefined) fail(`${at}.approvals[${i}].evidence`, 'required: an approval record must carry evidence');
-      return {
-        approverId: nonEmptyString(`${at}.approvals[${i}].approverId`, r.approverId),
-        evidence: evidenceItem(`${at}.approvals[${i}].evidence`, r.evidence),
-      };
-    });
-  }
-
   const authorization = item('authorization');
-  const humanApproval = item('humanApproval');
   const identityVerification = item('identityVerification');
   return {
     ...(authorization ? { authorization } : {}),
-    ...(humanApproval ? { humanApproval } : {}),
     ...(identityVerification ? { identityVerification } : {}),
     ...(a.requiredRoles !== undefined ? { requiredRoles: limitedStrings(`${at}.requiredRoles`, a.requiredRoles) } : {}),
     ...(a.requiredPermissions !== undefined ? { requiredPermissions: limitedStrings(`${at}.requiredPermissions`, a.requiredPermissions) } : {}),
     ...(grantedPermissions ? { grantedPermissions } : {}),
-    ...(a.requiredApprovals !== undefined ? { requiredApprovals: nonNegativeInteger(`${at}.requiredApprovals`, a.requiredApprovals) } : {}),
-    ...(approvals ? { approvals } : {}),
   };
 }
 

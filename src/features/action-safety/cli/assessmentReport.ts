@@ -37,7 +37,6 @@ const FACTORS: ReadonlyArray<{ id: FactorId; label: string; meaning: (b: Assessm
 
 const GATE_LABELS: Readonly<Record<string, string>> = {
   AUTHORIZATION: 'Authorization',
-  HUMAN_APPROVAL: 'Human approval',
   VERIFIED_RECOVERY: 'Verified recovery',
   BUILD_TEST_RESULTS: 'Build/test results',
   SUPPORTING_EVIDENCE: 'Supporting evidence',

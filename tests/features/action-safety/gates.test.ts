@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  GatePolicyError,
   constrainDecision,
   evaluateGates,
   type GateInput,
@@ -15,7 +14,6 @@ import type {
 
 const ALL_REQUIRED: GatePolicy = {
   authorization: { required: true },
-  humanApproval: { required: true },
   recovery: { required: true, whenIrreversible: true, minImpact: 'high' },
   buildTests: { required: true },
   supportingEvidence: { required: true },
@@ -23,7 +21,6 @@ const ALL_REQUIRED: GatePolicy = {
 
 const NOTHING_REQUIRED: GatePolicy = {
   authorization: { required: false },
-  humanApproval: { required: false },
   recovery: { required: false, whenIrreversible: true },
   buildTests: { required: false },
   supportingEvidence: { required: false },
@@ -39,7 +36,6 @@ const ACTION: ProposedAction = {
 const GOOD_AUTHORITY: AuthorityContext = {
   actor: { id: 'alice', kind: 'human', roles: ['release-manager'] },
   authorization: { status: 'PASS', refs: ['rbac:release-manager'] },
-  humanApproval: { status: 'PASS', refs: ['approval:42'] },
 };
 
 const GOOD_EVIDENCE: EvidenceSnapshot = {
@@ -59,7 +55,7 @@ function result(i: GateInput, gate: GateId) {
 describe('evaluateGates', () => {
   it('passes every gate and imposes no constraint when all mandatory conditions are satisfied', () => {
     const ev = evaluateGates(input());
-    expect(ev.results).toHaveLength(5);
+    expect(ev.results).toHaveLength(4);
     expect(ev.results.every((r) => r.status === 'PASS')).toBe(true);
     expect(ev.triggered).toEqual([]);
     expect(ev.consequence).toBeNull();
@@ -77,7 +73,7 @@ describe('evaluateGates', () => {
 
   describe('authorization', () => {
     it('fails and blocks when authorization is missing', () => {
-      const i = input({ authority: { actor: GOOD_AUTHORITY.actor, humanApproval: GOOD_AUTHORITY.humanApproval } });
+      const i = input({ authority: { actor: GOOD_AUTHORITY.actor } });
       const r = result(i, 'AUTHORIZATION');
       expect(r.status).toBe('FAIL');
       expect(r.consequence).toBe('BLOCK');
@@ -90,25 +86,21 @@ describe('evaluateGates', () => {
     });
   });
 
-  describe('human approval', () => {
-    const noApproval: AuthorityContext = { actor: GOOD_AUTHORITY.actor, authorization: GOOD_AUTHORITY.authorization };
-
-    it('escalates by default when approval is missing, and prevents ALLOW', () => {
-      const ev = evaluateGates(input({ authority: noApproval }));
-      expect(ev.results.find((r) => r.gate === 'HUMAN_APPROVAL')).toMatchObject({ status: 'FAIL', consequence: 'ESCALATE' });
-      expect(ev.consequence).toBe('ESCALATE');
-      expect(constrainDecision('ALLOW', ev)).toBe('ESCALATE');
+  describe('no human approval gate', () => {
+    it('evaluates exactly four gates, and none of them is a Human Approval gate', () => {
+      const ev = evaluateGates(input());
+      expect(ev.results.map((r) => r.gate).sort()).toEqual(['AUTHORIZATION', 'BUILD_TEST_RESULTS', 'SUPPORTING_EVIDENCE', 'VERIFIED_RECOVERY']);
     });
 
-    it('blocks when policy explicitly configures BLOCK', () => {
-      const policy: GatePolicy = { ...ALL_REQUIRED, humanApproval: { required: true, consequence: 'BLOCK' } };
-      const ev = evaluateGates(input({ authority: noApproval, policy }));
-      expect(ev.consequence).toBe('BLOCK');
-    });
-
-    it('rejects a consequence other than BLOCK or ESCALATE', () => {
-      const policy = { ...ALL_REQUIRED, humanApproval: { required: true, consequence: 'ALLOW' } } as unknown as GatePolicy;
-      expect(() => evaluateGates(input({ policy }))).toThrow(GatePolicyError);
+    it('a stray humanApproval entry in the authority context or policy is ignored: it can neither pass nor fail anything', () => {
+      const noApproval = evaluateGates(input());
+      const stray = evaluateGates(
+        input({
+          authority: { ...GOOD_AUTHORITY, humanApproval: { status: 'FAIL' } } as unknown as AuthorityContext,
+          policy: { ...ALL_REQUIRED, humanApproval: { required: true, consequence: 'BLOCK' } } as unknown as GatePolicy,
+        }),
+      );
+      expect(stray).toEqual(noApproval);
     });
   });
 
@@ -174,12 +166,12 @@ describe('evaluateGates', () => {
     it('treats UNKNOWN as not safe on every gate that is required', () => {
       const unknown = { status: 'UNKNOWN' } as const;
       const i = input({
-        authority: { actor: GOOD_AUTHORITY.actor, authorization: unknown, humanApproval: unknown },
+        authority: { actor: GOOD_AUTHORITY.actor, authorization: unknown },
         evidence: { buildTests: unknown, supporting: unknown, recovery: unknown },
       });
       const ev = evaluateGates(i);
-      expect(ev.results.map((r) => r.status)).toEqual(['UNKNOWN', 'UNKNOWN', 'UNKNOWN', 'UNKNOWN', 'UNKNOWN']);
-      expect(ev.triggered).toHaveLength(5);
+      expect(ev.results.map((r) => r.status)).toEqual(['UNKNOWN', 'UNKNOWN', 'UNKNOWN', 'UNKNOWN']);
+      expect(ev.triggered).toHaveLength(4);
       expect(ev.consequence).toBe('BLOCK');
     });
   });
@@ -209,7 +201,7 @@ describe('evaluateGates', () => {
       const policy: GatePolicy = { ...NOTHING_REQUIRED, buildTests: { required: true } };
       const i = input({ policy, authority: { actor: GOOD_AUTHORITY.actor }, evidence: GOOD_EVIDENCE });
       const ev = evaluateGates(i);
-      expect(ev.results.filter((r) => r.status === 'NOT_APPLICABLE')).toHaveLength(4);
+      expect(ev.results.filter((r) => r.status === 'NOT_APPLICABLE')).toHaveLength(3);
       expect(ev.consequence).toBeNull();
     });
   });
@@ -217,12 +209,12 @@ describe('evaluateGates', () => {
   describe('multiple failing gates', () => {
     it('reports every failing gate and BLOCK wins over ESCALATE', () => {
       const i = input({
-        authority: { actor: GOOD_AUTHORITY.actor }, // no authorization (BLOCK) and no approval (ESCALATE)
-        evidence: { ...GOOD_EVIDENCE, buildTests: { status: 'FAIL' }, recovery: undefined },
+        authority: { actor: GOOD_AUTHORITY.actor }, // no authorization (BLOCK)
+        evidence: { ...GOOD_EVIDENCE, buildTests: { status: 'FAIL' }, recovery: undefined, supporting: undefined }, // and missing supporting evidence (ESCALATE)
       });
       const ev = evaluateGates(i);
       expect(ev.triggered.map((r) => r.gate).sort()).toEqual(
-        ['AUTHORIZATION', 'BUILD_TEST_RESULTS', 'HUMAN_APPROVAL', 'VERIFIED_RECOVERY'].sort(),
+        ['AUTHORIZATION', 'BUILD_TEST_RESULTS', 'SUPPORTING_EVIDENCE', 'VERIFIED_RECOVERY'].sort(),
       );
       expect(ev.consequence).toBe('BLOCK');
     });
@@ -238,7 +230,7 @@ describe('evaluateGates', () => {
     });
 
     it('never loosens a decision: a BLOCK from elsewhere stays BLOCK under an ESCALATE gate', () => {
-      const i = input({ authority: { actor: GOOD_AUTHORITY.actor, authorization: GOOD_AUTHORITY.authorization } });
+      const i = input({ evidence: { ...GOOD_EVIDENCE, supporting: undefined } }); // supporting evidence defaults to ESCALATE
       const ev = evaluateGates(i);
       expect(ev.consequence).toBe('ESCALATE');
       expect(constrainDecision('BLOCK', ev)).toBe('BLOCK');

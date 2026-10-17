@@ -191,7 +191,6 @@ function maxAgeMs(type: EvidenceType, details: Readonly<Record<string, unknown>>
     case 'authority': {
       const kind = details?.authorityKind;
       const ah = DEFAULT_AUTHORITY_CONFIG.maxAgeHours;
-      if (kind === 'approval' || kind === 'human_approval') return HOUR(ah.approval);
       if (kind === 'permission_grant') return HOUR(ah.permissions);
       return HOUR(ah.identity);
     }
@@ -320,9 +319,7 @@ export function normalizeEvidence(c: CollectorOutputs, now: string): EvidenceRec
   authorityClaim(a.identityVerification, 'identity_verification', 'identity verification');
   authorityClaim(a.authorization, 'authorization', 'authorization record');
   authorityClaim(a.grantedPermissions?.evidence, 'permission_grant', 'permission grant record', { permissions: a.grantedPermissions?.permissions });
-  authorityClaim(a.humanApproval, 'human_approval', 'human approval record');
-  for (const ap of a.approvals) authorityClaim(ap.claim, 'approval', `approval by "${ap.approverId}"`, { approverId: ap.approverId });
-  if (authorityCount === 0) add(notCollected('authority', 'no authorization or approval record was supplied', ['authority is never inferred from the git user or repository ownership']));
+  if (authorityCount === 0) add(notCollected('authority', 'no authorization record was supplied', ['authority is never inferred from the git user or repository ownership']));
 
   // --- recovery (user-supplied claims only)
   const rc = c.recovery;

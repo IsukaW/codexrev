@@ -7,26 +7,25 @@
  * only a claim, so roles count only to the extent identity is verified.
  *
  * Scoring, in plain steps:
- *   1. Components, weighted (defaults 0.2 / 0.2 / 0.35 / 0.25):
+ *   1. Components, weighted (defaults 0.25 / 0.25 / 0.5):
  *        identity verified  - credit of the identity evidence (always applies)
  *        required roles     - share of required roles the actor holds x identity credit
  *        permissions        - share of required permissions in the grant record x credit of that record
- *        human approvals    - credit from distinct approvers other than the actor, divided by
- *                             the number required (capped at 1)
- *      Roles, permissions and approvals apply only when something is required.
- *   2. An explicit rejection by any approver sets the approvals component to 0.
- *   3. If identity is not verified the whole score is capped at 0.3.
+ *      Roles and permissions apply only when something is required.
+ *   2. If identity is not verified the whole score is capped at 0.3.
  *
- * This is a score only. A missing mandatory authorization or approval is
- * handled by the Critical Safety Gates, whatever this score says.
+ * (An earlier version had a fourth component for independent per-action human approvals, with weights
+ * 0.2 / 0.2 / 0.35 / 0.25. That mechanism was removed; the remaining weights keep the same proportions
+ * rounded to 0.25 / 0.25 / 0.5. A fully verified requester still scores 1.0.)
+ *
+ * This is a score only. A missing mandatory authorization is handled by the Critical Safety
+ * Gates, whatever this score says.
  */
 
 import type { ActorIdentity, EvidenceItem, FactorAssessment, ScoreAdjustment } from '../model/types.js';
 import {
   DEFAULT_CREDIT_CONFIG,
-  FactorInputError,
   adjustScore,
-  assertNonNegativeNumber,
   assertUnitInterval,
   creditFor,
   finalizeScore,
@@ -48,29 +47,21 @@ export interface AuthorityConfig {
     readonly identity: number;
     readonly roles: number;
     readonly permissions: number;
-    readonly approvals: number;
   };
   readonly maxAgeHours: {
     readonly identity: number;
     readonly permissions: number;
-    readonly approval: number;
   };
   readonly unverifiedIdentityCap: number;
   readonly credit: EvidenceCreditConfig;
 }
 
 export const DEFAULT_AUTHORITY_CONFIG: AuthorityConfig = {
-  weights: { identity: 0.2, roles: 0.2, permissions: 0.35, approvals: 0.25 },
-  maxAgeHours: { identity: 720, permissions: 720, approval: 72 },
+  weights: { identity: 0.25, roles: 0.25, permissions: 0.5 },
+  maxAgeHours: { identity: 720, permissions: 720 },
   unverifiedIdentityCap: 0.3,
   credit: DEFAULT_CREDIT_CONFIG,
 };
-
-export interface ApprovalRecord {
-  readonly approverId: string;
-  /** PASS = approved, FAIL = explicitly rejected */
-  readonly evidence: EvidenceItem;
-}
 
 export interface GrantedPermissions {
   readonly permissions: readonly string[];
@@ -86,9 +77,6 @@ export interface AuthorityAssessmentInput {
   readonly requiredRoles?: readonly string[];
   readonly requiredPermissions?: readonly string[];
   readonly granted?: GrantedPermissions;
-  /** how many distinct human approvals the policy asks for */
-  readonly requiredApprovals?: number;
-  readonly approvals?: readonly ApprovalRecord[];
   readonly config?: DeepPartial<AuthorityConfig>;
 }
 
@@ -98,13 +86,10 @@ export function assessAuthority(input: AuthorityAssessmentInput): FactorAssessme
   validateCreditConfig(cfg.credit);
   assertUnitInterval('authority.unverifiedIdentityCap', cfg.unverifiedIdentityCap);
   const nowMs = parseNow(input.now);
-  const requiredApprovals = input.requiredApprovals ?? 0;
-  assertNonNegativeNumber('requiredApprovals', requiredApprovals);
-  if (!Number.isInteger(requiredApprovals)) throw new FactorInputError('requiredApprovals must be an integer');
 
   const missing: string[] = [];
   const uncertain: string[] = [];
-  const conflicts: string[] = [];
+  const conflicts: string[] = []; // kept for the factor result shape; authority has no conflicting evidence of its own
   const refLists: Array<readonly string[] | undefined> = [];
 
   const note = (label: string, c: Credit): void => {
@@ -151,30 +136,6 @@ export function assessAuthority(input: AuthorityAssessmentInput): FactorAssessme
     }
   }
 
-  // approvals: distinct approvers, never the actor themselves
-  const byApprover = new Map<string, Credit[]>();
-  let rejected = false;
-  for (const a of input.approvals ?? []) {
-    if (a.approverId === input.actor.id) {
-      uncertain.push(`approval by "${a.approverId}" ignored: actors cannot approve their own action`);
-      continue;
-    }
-    const c = creditFor(`approval by ${a.approverId}`, a.evidence, {
-      nowMs,
-      maxAgeMs: hoursToMs(cfg.maxAgeHours.approval),
-      config: cfg.credit,
-    });
-    note(`approval by ${a.approverId}`, c);
-    if (c.state === 'failed') rejected = true;
-    byApprover.set(a.approverId, [...(byApprover.get(a.approverId) ?? []), c]);
-  }
-  const approverValues = [...byApprover.values()].map((cs) => Math.max(...cs.map((c) => c.value)));
-  const hasValidApproval = approverValues.some((v) => v > 0);
-  if (rejected && hasValidApproval) conflicts.push('some approvers approved while another explicitly rejected');
-  if (requiredApprovals > 0 && byApprover.size === 0) missing.push('human approvals');
-  const approvalSum = approverValues.reduce((n, v) => n + v, 0);
-  const approvalsValue = rejected ? 0 : requiredApprovals === 0 ? 1 : Math.min(1, approvalSum / requiredApprovals);
-
   const raw: RawComponent[] = [
     { name: 'identity verified', weight: cfg.weights.identity, value: identity.value, note: identity.note, applied: true },
     {
@@ -190,15 +151,6 @@ export function assessAuthority(input: AuthorityAssessmentInput): FactorAssessme
       value: permShare * grantCredit.value,
       note: `${coveredPerms.length}/${requiredPerms.length} required permissions granted, scaled by grant-record credit (${grantCredit.state})`,
       applied: requiredPerms.length > 0,
-    },
-    {
-      name: 'human approvals',
-      weight: cfg.weights.approvals,
-      value: approvalsValue,
-      note: rejected
-        ? 'an approver explicitly rejected'
-        : `${byApprover.size} distinct approver(s) on record, ${requiredApprovals} required`,
-      applied: requiredApprovals > 0,
     },
   ];
   const { score: base, breakdown } = weightedAverage(raw);
@@ -219,8 +171,6 @@ export function assessAuthority(input: AuthorityAssessmentInput): FactorAssessme
   const explanation =
     `Authority ${score.toFixed(2)}: identity ${identity.state}` +
     (requiredPerms.length > 0 ? `, ${coveredPerms.length}/${requiredPerms.length} permissions granted` : '') +
-    (requiredApprovals > 0 ? `, ${approverValues.filter((v) => v > 0).length}/${requiredApprovals} valid approvals` : '') +
-    (rejected ? ', an approval was rejected' : '') +
     '.';
 
   return {

@@ -50,7 +50,6 @@ const attested = (observedAt = FRESH, refs: string[] = ['ref:x']) => ({ status: 
 
 const ALL_REQUIRED: GatePolicy = {
   authorization: { required: true },
-  humanApproval: { required: true },
   recovery: { required: true, whenIrreversible: true, minImpact: 'high' },
   buildTests: { required: true },
   supportingEvidence: { required: true },
@@ -85,8 +84,6 @@ const FULL_INPUT = {
     requiredRoles: ['release-manager'],
     requiredPermissions: ['deploy:prod'],
     grantedPermissions: { permissions: ['deploy:prod'], evidence: attested() },
-    requiredApprovals: 1,
-    approvals: [{ approverId: 'bob', evidence: attested() }],
   },
   reports: { buildTests: ['reports/tests.json'], security: ['reports/sec.sarif'] },
   recovery: { rollbackPlan: attested(), rollbackTest: attested(), backup: attested() },
@@ -126,7 +123,7 @@ describe('collectEvidence: a fully supplied scenario', () => {
     expect(ofType(b, 'security_findings')[0]).toMatchObject({ origin: 'imported_report', status: 'PASS', refs: ['reports/sec.sarif'] });
 
     const authority = ofType(b, 'authority');
-    expect(authority.length).toBeGreaterThanOrEqual(4);
+    expect(authority.length).toBeGreaterThanOrEqual(3);
     expect(authority.every((r) => r.origin === 'user_supplied')).toBe(true);
     const recovery = ofType(b, 'recovery');
     expect(recovery.map((r) => r.details?.recoveryKind)).toEqual(['rollback_plan', 'rollback_test', 'backup']);
@@ -155,7 +152,6 @@ describe('collectEvidence: a fully supplied scenario', () => {
     const g = gateResultsFor(await collect(FULL_INPUT));
     expect(g.results.map((r) => [r.gate, r.status])).toEqual([
       ['AUTHORIZATION', 'PASS'],
-      ['HUMAN_APPROVAL', 'PASS'],
       ['VERIFIED_RECOVERY', 'PASS'],
       ['BUILD_TEST_RESULTS', 'PASS'],
       ['SUPPORTING_EVIDENCE', 'PASS'],
@@ -182,7 +178,7 @@ describe('collectEvidence: missing evidence is explicit UNKNOWN, never PASS', ()
 
     const { authority, evidence } = toGateInputs(b);
     expect(authority.authorization).toBeUndefined();
-    expect(authority.humanApproval).toBeUndefined();
+    expect(authority).not.toHaveProperty('humanApproval');
     expect(authority.actor).toEqual(UNIDENTIFIED_ACTOR);
     expect(evidence.buildTests?.status).toBe('UNKNOWN');
     expect(evidence.supporting?.status).toBe('UNKNOWN');
@@ -258,19 +254,10 @@ describe('collectEvidence: failed, stale and untrusted evidence', () => {
     expect(g.consequence).toBe('BLOCK');
   });
 
-  it('too few approvals, or only a self-approval, never pass the human-approval gate', async () => {
+  it('has no approval gate: approval claims in the input are rejected as unknown, never counted', async () => {
     await writeReports();
-    const two = { ...FULL_INPUT, authority: { ...FULL_INPUT.authority, requiredApprovals: 2 } };
-    expect(gateResultsFor(await collect(two)).results.find((r) => r.gate === 'HUMAN_APPROVAL')?.status).toBe('UNKNOWN');
-
-    const selfOnly = { ...FULL_INPUT, authority: { ...FULL_INPUT.authority, approvals: [{ approverId: 'alice', evidence: attested() }] } };
-    expect(gateResultsFor(await collect(selfOnly)).results.find((r) => r.gate === 'HUMAN_APPROVAL')?.status).toBe('FAIL');
-
-    const rejected = {
-      ...FULL_INPUT,
-      authority: { ...FULL_INPUT.authority, approvals: [{ approverId: 'bob', evidence: attested() }, { approverId: 'carol', evidence: { status: 'FAIL', source: 'human_attested', observedAt: FRESH } }] },
-    };
-    expect(gateResultsFor(await collect(rejected)).results.find((r) => r.gate === 'HUMAN_APPROVAL')?.status).toBe('FAIL');
+    const claimed = { ...FULL_INPUT, authority: { ...FULL_INPUT.authority, requiredApprovals: 1, approvals: [{ approverId: 'bob', evidence: attested() }] } };
+    expect(() => collect(claimed)).toThrow(/requiredApprovals|approvals/);
   });
 
   it('imported security findings at high severity fail supporting evidence; no report leaves it UNKNOWN', async () => {

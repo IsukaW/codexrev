@@ -34,7 +34,7 @@ export const PIPELINE_STAGES: readonly PipelineStage[] = [
   { name: 'Local LLM contextual interpretation', status: 'connected', note: 'advisory only: unverified observations from the configured local model; it can be unavailable' },
   { name: 'Four factor assessments', status: 'connected', note: 'reversibility, blast radius, authority, evidence strength' },
   { name: 'Weighted safety score', status: 'connected', note: 'provisional equal weights' },
-  { name: 'Critical safety gates', status: 'connected', note: 'five gates, independent of the score' },
+  { name: 'Critical safety gates', status: 'connected', note: 'four gates, independent of the score' },
   { name: 'Final decision', status: 'connected', note: 'score thresholds, then gates, then the interpretation policy' },
   { name: 'Signed Evidence Pack', status: 'not_implemented', note: 'Evidence Pack generation and Ed25519 signing' },
 ];

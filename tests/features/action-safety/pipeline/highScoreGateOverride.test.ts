@@ -71,8 +71,6 @@ function scenario(authorization: AuthorizationRecord): Record<string, unknown> {
     requiredRoles: ['developer'],
     requiredPermissions: ['code:change'],
     grantedPermissions: { permissions: ['code:change'], evidence: attested('permission grant record') },
-    requiredApprovals: 1,
-    approvals: [{ approverId: 'synthetic-reviewer', evidence: attested('peer approval') }],
   };
   // the ONLY thing that differs between scenarios: the Authorization gate's own record
   if (authorization === 'self_declared') authority.authorization = { status: 'PASS', observedAt: FRESH, refs: [`${SYNTHETIC}: authorization claim with no stated source`] };

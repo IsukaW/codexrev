@@ -16,6 +16,7 @@ import { renderAssessment } from './assessmentReport.js';
 import { SAFETY_EXIT_CODES, exitCodeForOutcome } from './exitCodes.js';
 import { detectRenderOptions } from './terminalStyle.js';
 import { runAssessmentSession } from './runAssessment.js';
+import { strictAssessCommand } from './strictAssessCommand.js';
 
 // re-exported so existing imports keep working
 export { SAFETY_EXIT_CODES } from './exitCodes.js';
@@ -28,6 +29,9 @@ export interface SafetyFlags {
   diff?: unknown;
   output?: unknown;
   file?: unknown;
+  /** assess only: verify the saved administrator-signed grant (see strictAssessCommand.ts) */
+  strict?: unknown;
+  app?: unknown;
 }
 
 export async function handleSafetyCommand(
@@ -71,6 +75,10 @@ export async function handleSafetyCommand(
 }
 
 async function assessCommand(flags: SafetyFlags, cwd: string): Promise<void> {
+  if (flags.strict === true) {
+    process.exitCode = await strictAssessCommand(flags, cwd);
+    return;
+  }
   const result = await runAssessmentSession({ cwd, flags });
   // color, Unicode and width come from the terminal and environment (NO_COLOR, FORCE_COLOR, TTY)
   for (const line of renderAssessment(result, detectRenderOptions())) console.log(line);
@@ -105,6 +113,7 @@ function historyCommand(): void {
 
 export function printSafetyUsage(): void {
   console.error('usage: codexrev safety assess --action <type> --target <environment> [--input <path>] [--diff <ref>] [--output <path>]');
+  console.error('       codexrev safety assess --strict --action <type> --target <environment> [--app <name>] [--input <path>]');
   console.error('       codexrev safety verify --file <evidence-pack-path>');
   console.error('       codexrev safety history');
 }

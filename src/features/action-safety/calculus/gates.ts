@@ -9,14 +9,17 @@
  *   - evidence UNKNOWN, or marked NOT_APPLICABLE although policy requires it
  *     -> UNKNOWN
  *   - evidence missing entirely: FAIL for the control gates (authorization,
- *     approval, recovery), UNKNOWN for the evidence gates (tests, supporting)
+ *     recovery), UNKNOWN for the evidence gates (tests, supporting)
  *
  * Only PASS and NOT_APPLICABLE let an action through. FAIL and UNKNOWN both
  * trigger the gate's consequence, so unknown is never treated as safe.
  *
  * Consequences: authorization, recovery and build/test gates always BLOCK.
- * Human approval and supporting evidence default to ESCALATE and the policy
- * may raise them to BLOCK.
+ * Supporting evidence defaults to ESCALATE and the policy may raise it to BLOCK.
+ *
+ * FOUR gates: authorization, recovery, build/test and supporting evidence. (An earlier design had a fifth,
+ * independent per-action human-approval gate. It was removed: authority now comes from administrator-signed,
+ * reusable role grants, verified by the Authorization gate.)
  */
 
 import { CodexrevError } from '../../../utils/errors.js';
@@ -66,7 +69,6 @@ export interface RecoveryGateRule {
  */
 export interface GatePolicy {
   readonly authorization: FixedGateRule;
-  readonly humanApproval: ConfigurableGateRule;
   readonly recovery: RecoveryGateRule;
   readonly buildTests: FixedGateRule;
   readonly supportingEvidence: ConfigurableGateRule;
@@ -144,19 +146,6 @@ export function evaluateAuthorizationGate(input: GateInput): GateResult {
   });
 }
 
-export function evaluateHumanApprovalGate(input: GateInput): GateResult {
-  const rule = input.policy.humanApproval;
-  const consequence = validateConsequence('HUMAN_APPROVAL', rule.consequence ?? 'ESCALATE');
-  if (!rule.required) return notRequired('HUMAN_APPROVAL', consequence, 'human approval gate disabled');
-  return judge({
-    gate: 'HUMAN_APPROVAL',
-    label: 'Human approval',
-    item: input.authority.humanApproval,
-    missingStatus: 'FAIL',
-    consequence,
-  });
-}
-
 function impactRank(level: ImpactLevel): number {
   return IMPACT_LEVELS.indexOf(level);
 }
@@ -231,11 +220,10 @@ export function summarizeGateResults(results: readonly GateResult[]): GateEvalua
   return { results, triggered, consequence };
 }
 
-/** Runs all five gates, each on its own. Takes no Safety Score, so it cannot be influenced by one. */
+/** Runs all four gates, each on its own. Takes no Safety Score, so it cannot be influenced by one. */
 export function evaluateGates(input: GateInput): GateEvaluation {
   return summarizeGateResults([
     evaluateAuthorizationGate(input),
-    evaluateHumanApprovalGate(input),
     evaluateRecoveryGate(input),
     evaluateBuildTestGate(input),
     evaluateSupportingEvidenceGate(input),

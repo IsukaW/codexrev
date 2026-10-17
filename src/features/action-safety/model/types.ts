@@ -70,8 +70,6 @@ export interface AuthorityContext {
   readonly actor: ActorIdentity;
   /** is the actor allowed to perform this action? absent = nobody recorded a check */
   readonly authorization?: EvidenceItem;
-  /** has a human explicitly signed off? absent = nobody recorded an approval */
-  readonly humanApproval?: EvidenceItem;
 }
 
 /** Evidence gathered about the action. Each field absent = that evidence was never collected. */
@@ -152,7 +150,6 @@ export type Decision = (typeof DECISIONS)[number];
 
 export type GateId =
   | 'AUTHORIZATION'
-  | 'HUMAN_APPROVAL'
   | 'VERIFIED_RECOVERY'
   | 'BUILD_TEST_RESULTS'
   | 'SUPPORTING_EVIDENCE';

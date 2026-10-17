@@ -12,9 +12,8 @@ describe('collectAuthority', () => {
     const c = collectAuthority({});
     expect(c.actor).toBeUndefined();
     expect(c.authorization).toBeUndefined();
-    expect(c.humanApproval).toBeUndefined();
-    expect(c.approvals).toEqual([]);
-    expect(c.requiredApprovals).toBe(0);
+    expect(c).not.toHaveProperty('humanApproval');
+    expect(c).not.toHaveProperty('approvals');
     expect(c.limitations.join(' ')).toMatch(/never inferred from the git user or repository ownership/);
     expect(c.limitations.join(' ')).toMatch(/no authorization record was supplied/);
   });
@@ -29,11 +28,11 @@ describe('collectAuthority', () => {
   it('separates verified-looking claims from self-declared ones', () => {
     const c = collectAuthority({
       actor: ACTOR,
-      authority: { authorization: { status: 'PASS' }, humanApproval: attested(), identityVerification: { status: 'PASS', source: 'self_declared' } },
+      authority: { authorization: { status: 'PASS' }, identityVerification: { status: 'PASS', source: 'self_declared' } },
     });
     expect(c.authorization?.trusted).toBe(false);
     expect(c.authorization?.item.source).toBe('self_declared');
-    expect(c.humanApproval?.trusted).toBe(true);
+    expect(c.authorization?.trusted).toBe(false);
     expect(c.identityVerification?.trusted).toBe(false);
   });
 
@@ -41,16 +40,6 @@ describe('collectAuthority', () => {
     const c = collectAuthority({ actor: ACTOR, authority: { authorization: { status: 'PASS', source: 'verified_system', observedAt: FRESH } } });
     expect(c.authorization?.item.source).toBe('human_attested');
     expect(c.limitations.join(' ')).toMatch(/declared source "verified_system" cannot be verified from an input file/);
-  });
-
-  it('flags an approval by the actor themselves', () => {
-    const c = collectAuthority({ actor: ACTOR, authority: { requiredApprovals: 1, approvals: [{ approverId: 'alice', evidence: attested() }] } });
-    expect(c.limitations.join(' ')).toMatch(/cannot approve their own action/);
-  });
-
-  it('notes missing approvals when some are required', () => {
-    const c = collectAuthority({ actor: ACTOR, authority: { requiredApprovals: 2 } });
-    expect(c.limitations.join(' ')).toMatch(/2 human approval\(s\) required but none were supplied/);
   });
 
   it('keeps granted permissions without proof as a claim and says so', () => {

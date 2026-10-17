@@ -14,22 +14,14 @@ import type { ActorIdentity, EvidenceItem } from '../model/types.js';
 import type { InputAuthority } from '../cli/assessmentInput.js';
 import { normalizeUserClaim, type NormalizedClaim } from './types.js';
 
-export interface CollectedApproval {
-  readonly approverId: string;
-  readonly claim: NormalizedClaim;
-}
-
 export interface AuthorityCollection {
   /** only what the input file stated; absent means nobody identified the actor */
   readonly actor?: ActorIdentity;
   readonly authorization?: NormalizedClaim;
-  readonly humanApproval?: NormalizedClaim;
   readonly identityVerification?: NormalizedClaim;
   readonly requiredRoles: readonly string[];
   readonly requiredPermissions: readonly string[];
   readonly grantedPermissions?: { readonly permissions: readonly string[]; readonly evidence?: NormalizedClaim };
-  readonly requiredApprovals: number;
-  readonly approvals: readonly CollectedApproval[];
   readonly limitations: readonly string[];
 }
 
@@ -49,7 +41,6 @@ export function collectAuthority(input: { readonly actor?: ActorIdentity; readon
 
   const authorization = claim('authorization record', a?.authorization);
   if (!authorization) limitations.push('no authorization record was supplied');
-  const humanApproval = claim('human approval record', a?.humanApproval);
   const identityVerification = claim('identity verification', a?.identityVerification);
   if (actor && !identityVerification) limitations.push('the actor\'s identity and roles are self-reported: no identity verification was supplied');
 
@@ -60,30 +51,13 @@ export function collectAuthority(input: { readonly actor?: ActorIdentity; readon
     grantedPermissions = { permissions: [...a.grantedPermissions.permissions], ...(evidence ? { evidence } : {}) };
   }
 
-  const approvals: CollectedApproval[] = [];
-  for (const [i, rec] of (a?.approvals ?? []).entries()) {
-    const n = normalizeUserClaim(`approval by "${rec.approverId}"`, rec.evidence);
-    limitations.push(...n.limitations);
-    if (actor && rec.approverId === actor.id) {
-      limitations.push(`approval #${i + 1} is by the actor "${actor.id}" themselves: an actor cannot approve their own action`);
-    }
-    approvals.push({ approverId: rec.approverId, claim: n });
-  }
-  const requiredApprovals = a?.requiredApprovals ?? 0;
-  if (requiredApprovals > 0 && approvals.length === 0 && !humanApproval) {
-    limitations.push(`${requiredApprovals} human approval(s) required but none were supplied`);
-  }
-
   return {
     ...(actor ? { actor } : {}),
     ...(authorization ? { authorization } : {}),
-    ...(humanApproval ? { humanApproval } : {}),
     ...(identityVerification ? { identityVerification } : {}),
     requiredRoles: [...(a?.requiredRoles ?? [])],
     requiredPermissions: [...(a?.requiredPermissions ?? [])],
     ...(grantedPermissions ? { grantedPermissions } : {}),
-    requiredApprovals,
-    approvals,
     limitations,
   };
 }

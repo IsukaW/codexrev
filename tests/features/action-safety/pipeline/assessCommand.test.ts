@@ -28,8 +28,6 @@ function strongInput(over: Record<string, unknown> = {}): Record<string, unknown
       requiredRoles: ['developer'],
       requiredPermissions: ['deploy'],
       grantedPermissions: { permissions: ['deploy'], evidence: attested() },
-      requiredApprovals: 1,
-      approvals: [{ approverId: 'bob', evidence: attested() }],
     },
     reports: { buildTests: ['reports/tests.json'], security: ['reports/sec.sarif'] },
     recovery: { rollbackPlan: attested(), rollbackTest: attested(), backup: attested() },
@@ -99,7 +97,6 @@ describe('codexrev safety assess: the complete pipeline through the CLI', () => 
     expect(text).toMatch(/= 0\.250\*R\(0\.\d{3}\) \+ 0\.250\*\(1-B\)\(0\.\d{3}\) \+ 0\.250\*A\(0\.\d{3}\) \+ 0\.250\*E\(0\.\d{3}\)/);
     expect(text).toMatch(/Score alone +\S+ ALLOW/);
     expect(text).toMatch(/\+ Authorization +PASS +none/);
-    expect(text).toMatch(/\+ Human approval +PASS +none/);
     expect(text).toMatch(/- Verified recovery +NOT_APPLICABLE +not required/);
     expect(text).toMatch(/After critical gates +\S+ ALLOW +the gates did not change it/);
     expect(text).toMatch(/Interpretation policy: advisory/);

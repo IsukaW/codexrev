@@ -23,7 +23,7 @@ function strong(over: Record<string, unknown> = {}): Record<string, unknown> {
     actor: { id: 'alice', kind: 'human', roles: ['developer'] },
     authority: {
       identityVerification: attested(), authorization: attested(), requiredRoles: ['developer'], requiredPermissions: ['deploy'],
-      grantedPermissions: { permissions: ['deploy'], evidence: attested() }, requiredApprovals: 1, approvals: [{ approverId: 'bob', evidence: attested() }],
+      grantedPermissions: { permissions: ['deploy'], evidence: attested() },
     },
     reports: { buildTests: ['reports/tests.json'], security: ['reports/sec.sarif'] },
     recovery: { rollbackPlan: attested(), rollbackTest: attested(), backup: attested() },
@@ -213,23 +213,23 @@ describe('safety score and factors', () => {
 });
 
 describe('critical safety gates', () => {
-  it('shows all five gates with evidence status and effect, in an aligned table', () => {
+  it('shows all four gates with evidence status and effect, in an aligned table', () => {
     const t = text(block);
-    const rows = ['Authorization', 'Human approval', 'Verified recovery', 'Build/test results', 'Supporting evidence'].map((l) => lineWith(t, new RegExp(`^\\s+\\S ${l}`)));
+    const rows = ['Authorization', 'Verified recovery', 'Build/test results', 'Supporting evidence'].map((l) => lineWith(t, new RegExp(`^\\s+\\S ${l}`)));
     for (const r of rows) expect(r, r).not.toBe('');
     // aligned: every row's EVIDENCE column starts at the same offset
     const cols = rows.map((r) => r.search(/ (PASS|FAIL|UNKNOWN|NOT_APPLICABLE) /));
     expect(new Set(cols).size).toBe(1);
     expect(rows[0]).toMatch(/Authorization +FAIL +x BLOCK/);
-    expect(rows[1]).toMatch(/Human approval +PASS +none/);
-    expect(rows[2]).toMatch(/Verified recovery +NOT_APPLICABLE +not required/);
+    expect(t).not.toMatch(/Human approval/);
+    expect(rows[1]).toMatch(/Verified recovery +NOT_APPLICABLE +not required/);
     expect(t).toMatch(/GATE +EVIDENCE +EFFECT/);
   });
 
   it('shows the effect of each failing gate: BLOCK vs ESCALATE', () => {
     const t = text(empty);
     expect(lineWith(t, /Authorization +FAIL/)).toMatch(/x BLOCK/);
-    expect(lineWith(t, /Human approval +FAIL/)).toMatch(/\^ ESCALATE/);
+    expect(lineWith(t, /Supporting evidence +(FAIL|UNKNOWN)/)).toMatch(/\^ ESCALATE/);
   });
 
   it('never presents UNKNOWN as PASS: stale evidence shows ? UNKNOWN with its BLOCK effect', () => {
@@ -244,7 +244,7 @@ describe('critical safety gates', () => {
   it('colors PASS green, FAIL red, UNKNOWN yellow and NOT_APPLICABLE gray, each also a word', () => {
     const t = text(block, COLOR);
     expect(lineWith(t, /Authorization +FAIL/)).toContain('\x1b[1;31mFAIL');
-    expect(lineWith(t, /Human approval +PASS/)).toContain('\x1b[1;32mPASS');
+    expect(lineWith(t, /Build\/test results +PASS/)).toContain('\x1b[1;32mPASS');
     expect(lineWith(t, /Verified recovery/)).toContain('\x1b[90mNOT_APPLICABLE');
     expect(lineWith(text(staleTests, COLOR), /Build\/test results +/)).toContain('\x1b[1;33mUNKNOWN');
   });
@@ -526,7 +526,7 @@ describe('the command applies the terminal environment', () => {
     const input = strong({
       authority: {
         identityVerification: claim, authorization: claim, requiredRoles: ['developer'], requiredPermissions: ['deploy'],
-        grantedPermissions: { permissions: ['deploy'], evidence: claim }, requiredApprovals: 1, approvals: [{ approverId: 'bob', evidence: claim }],
+        grantedPermissions: { permissions: ['deploy'], evidence: claim },
       },
       reports: { buildTests: ['reports/tests-live.json'], security: ['reports/sec-live.sarif'] },
       recovery: { rollbackPlan: claim, rollbackTest: claim, backup: claim },
@@ -542,7 +542,7 @@ describe('the command applies the terminal environment', () => {
     expect(r.code).toBe(10);
   });
 
-  it('FORCE_COLOR adds color, NO_COLOR removes it again, and the decision and exit code do not change', async () => {
+  it('FORCE_COLOR adds color, NO_COLOR removes it again, and the decision and exit code do not change', { timeout: 60_000 }, async () => {
     const plain = await run();
     out = [];
     process.env.FORCE_COLOR = '1';

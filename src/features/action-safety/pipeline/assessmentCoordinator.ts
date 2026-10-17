@@ -7,7 +7,7 @@
  *     -> evidenceAdapters          (assessor and gate inputs, with the trust and freshness rules)
  *     -> assessReversibility / assessBlastRadius / assessAuthority / assessEvidenceStrength
  *     -> calculateSafetyScore      (SafetyScore = aR + b(1-B) + gA + dE, from the four REAL results)
- *     -> evaluateGates             (five Critical Safety Gates, independent of the score)
+ *     -> evaluateGates             (four Critical Safety Gates, independent of the score)
  *     -> decideAction              (score thresholds, then gates may only make it stricter)
  *     -> constrainDecisionByInterpretation  (a mandatory-but-unusable interpretation prevents ALLOW)
  *
@@ -59,6 +59,7 @@ import {
 } from '../interpretation/policy.js';
 import type { ContextInterpretation } from '../interpretation/types.js';
 import type { Decision, FactorAssessment, FactorId, ProposedAction } from '../model/types.js';
+import { isStrictAuthorityInput, type StrictAuthorityInput } from '../authorization/strictAssessmentInput.js';
 
 /**
  * PROVISIONAL gate policy, used only when the input file states none. It is
@@ -69,7 +70,6 @@ import type { Decision, FactorAssessment, FactorId, ProposedAction } from '../mo
  */
 export const DEFAULT_GATE_POLICY: GatePolicy = {
   authorization: { required: true },
-  humanApproval: { required: true },
   recovery: { required: true, whenIrreversible: true, minImpact: 'medium' },
   buildTests: { required: true },
   supportingEvidence: { required: true },
@@ -93,6 +93,14 @@ export interface AssessmentInputs {
   /** ISO time used for every freshness check, so the result is reproducible */
   readonly now: string;
   readonly policy?: Partial<AssessmentPolicy>;
+  /**
+   * STRICT mode: verified authority from the signed-authorization subsystem (see strictAssessmentInput.ts).
+   * When present, the Authority factor, the Authorization gate and ALL gate rules come
+   * from it, and everything the bundle (that is, the assessment JSON) says about authority or gate policy
+   * is ignored. Anything that is not a genuine StrictAuthorityInput fails the assessment with no decision.
+   * When absent, behavior is exactly the advisory behavior.
+   */
+  readonly strictAuthority?: StrictAuthorityInput;
 }
 
 export type InterpretationReasonCode =
@@ -110,7 +118,7 @@ export interface PolicyInUse {
   readonly decisionPolicyId: string;
   readonly decisionPolicyProvisional: boolean;
   /** where the gate policy came from; 'default_provisional' means nobody stated one */
-  readonly gatePolicySource: 'assessment_policy' | 'input_file' | 'default_provisional';
+  readonly gatePolicySource: 'assessment_policy' | 'input_file' | 'default_provisional' | 'strict_verified';
   readonly interpretationPolicy: InterpretationPolicy;
 }
 
@@ -207,13 +215,16 @@ function assess(inputs: AssessmentInputs): AssessmentSuccess {
   const calculusConfig = inputs.policy?.calculus ?? DEFAULT_CALCULUS_CONFIG;
   const decisionPolicy = inputs.policy?.decision ?? DEFAULT_DECISION_POLICY;
   const interpretationPolicy = inputs.policy?.interpretation ?? DEFAULT_INTERPRETATION_POLICY;
-  const gatePolicy = inputs.policy?.gates ?? bundle.policy ?? DEFAULT_GATE_POLICY;
-  const gatePolicySource: PolicyInUse['gatePolicySource'] = inputs.policy?.gates ? 'assessment_policy' : bundle.policy ? 'input_file' : 'default_provisional';
+  const strict = inputs.strictAuthority;
+  if (strict !== undefined && !isStrictAuthorityInput(strict)) throw new StageError('strict authority', new Error('the strict authority input is not a genuine result of the signed-authorization subsystem'));
+  // strict mode: the rules are the verified strict ones plus fixed trusted rules; the input file's policy is ignored
+  const gatePolicy = strict ? strict.gatePolicy : (inputs.policy?.gates ?? bundle.policy ?? DEFAULT_GATE_POLICY);
+  const gatePolicySource: PolicyInUse['gatePolicySource'] = strict ? 'strict_verified' : inputs.policy?.gates ? 'assessment_policy' : bundle.policy ? 'input_file' : 'default_provisional';
 
   // 1-2. the validated action, and what the gates are allowed to see (trusted and fresh evidence only)
   const { action, assumptions: actionAssumptions } = inStage('evidence adapters', () => toProposedAction(bundle));
   const gateInputs = inStage('evidence adapters', () => toGateInputs(bundle));
-  const gateInput = { action, authority: gateInputs.authority, evidence: gateInputs.evidence, policy: gatePolicy };
+  const gateInput = { action, authority: strict ? strict.authority : gateInputs.authority, evidence: gateInputs.evidence, policy: gatePolicy };
 
   // evidence strength counts a kind as required only if the matching gate asks for it
   // (recovery only when the recovery gate applies to this action)
@@ -228,7 +239,7 @@ function assess(inputs: AssessmentInputs): AssessmentSuccess {
   const reversibilityAdapter = inStage('evidence adapters', () => toReversibilityInput(bundle, now));
   const reversibility = inStage('reversibility', () => assessReversibility(reversibilityAdapter.input));
   const blastRadius = inStage('blast radius', () => assessBlastRadius(toBlastRadiusInput(bundle)));
-  const authority = inStage('authority', () => assessAuthority(toAuthorityInput(bundle, now)));
+  const authority = inStage('authority', () => assessAuthority(strict ? strict.authorityInput : toAuthorityInput(bundle, now)));
   const evidenceStrength = inStage('evidence strength', () => assessEvidenceStrength(toEvidenceStrengthInput(bundle, now, required)));
 
   // 7. the weighted calculus, from the four real results
@@ -290,6 +301,7 @@ function assess(inputs: AssessmentInputs): AssessmentSuccess {
   if (calculusConfig.provisional) provisional.push(`weights "${calculusConfig.id}"`);
   if (decisionPolicy.provisional) provisional.push(`score thresholds "${decisionPolicy.id}"`);
   if (gatePolicySource === 'default_provisional') provisional.push('the default gate policy (none was stated in the input)');
+  if (gatePolicySource === 'strict_verified') provisional.push('the fixed default rules for the recovery, build/test and supporting-evidence gates (strict mode ignores any gate policy stated in the input)');
   const provisionalNotice = provisional.length > 0
     ? `Provisional research values are in use: ${provisional.join(', ')}. They are illustrative and have not been calibrated by research evaluation.`
     : 'All weights, thresholds and policies in use were explicitly configured.';
