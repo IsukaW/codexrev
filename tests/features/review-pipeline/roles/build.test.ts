@@ -92,12 +92,12 @@ describe('runBuildRole — dispatch', () => {
   }, 30_000);
 });
 
-describe('runBuildRole — buildless-project fallback (node --check)', () => {
+describe('runBuildRole — buildless-project fallback (per-file syntax checks)', () => {
   it('still passes with no findings when no markers exist AND no JS files are in the diff', async () => {
     const out = await runBuildRole(ctxFor(tmpRoot)); // EMPTY_DIFF has no files
     expect(out.verdict).toBe('pass');
     expect(out.findings).toEqual([]);
-    expect(out.summary).toMatch(/no JS files in this diff/);
+    expect(out.summary).toMatch(/no source files in this diff/);
   });
 
   it('passes when the only JS file in the diff is syntactically valid', async () => {
@@ -105,7 +105,7 @@ describe('runBuildRole — buildless-project fallback (node --check)', () => {
     const out = await runBuildRole(ctxWithDiff(tmpRoot, diffWithFiles([{ path: 'good.js' }])));
     expect(out.verdict).toBe('pass');
     expect(out.findings).toEqual([]);
-    expect(out.summary).toMatch(/node --check \(fallback/);
+    expect(out.summary).toMatch(/fallback — no build configuration found\): node --check: 0 error\(s\) in 1 file/);
   });
 
   it('blocks on a real JS syntax error caught by node --check', async () => {
@@ -118,17 +118,17 @@ describe('runBuildRole — buildless-project fallback (node --check)', () => {
     expect(out.findings[0].description).toMatch(/SyntaxError/);
   });
 
-  it('only checks .js/.mjs/.cjs files in the diff, skipping others (e.g. .md, .json)', async () => {
+  it('skips files that are not source code (e.g. .md, .json)', async () => {
     await fs.writeFile(path.join(tmpRoot, 'notes.md'), '# not js\n', 'utf-8');
     const out = await runBuildRole(ctxWithDiff(tmpRoot, diffWithFiles([{ path: 'notes.md' }])));
     expect(out.verdict).toBe('pass');
-    expect(out.summary).toMatch(/no JS files in this diff/);
+    expect(out.summary).toMatch(/no source files in this diff/);
   });
 
   it('skips deleted files — nothing on disk left to check', async () => {
     const out = await runBuildRole(ctxWithDiff(tmpRoot, diffWithFiles([{ path: 'gone.js', status: 'deleted' }])));
     expect(out.verdict).toBe('pass');
-    expect(out.summary).toMatch(/no JS files in this diff/);
+    expect(out.summary).toMatch(/no source files in this diff/);
   });
 
   it('does not run the fallback when a real build marker IS present', async () => {

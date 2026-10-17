@@ -7,6 +7,7 @@ import type { ILLMProvider } from './illmProvider.js';
 import type { Finding, RoleId } from '../roles/roleContract.js';
 import type { RoleMetrics } from './roleMetrics.js';
 import type { RoleCache } from './reviewCache.js';
+import type { ToolchainOptions } from '../../../core/toolchains/index.js';
 
 // Present only when roles are re-judging code after the --fix loop edited it.
 // Informational: roles must still judge the CURRENT code by the same standard as a
@@ -29,4 +30,8 @@ export interface RoleRunContext {
   readonly metrics?: RoleMetrics;
   /** when set, an identical role judgement of identical code is reused instead of asking the model again */
   readonly cache?: RoleCache;
+  /** the user's toolchain commands (settings `toolchain`) and whether the OS sandbox may be used — read by the Build role */
+  readonly toolchain?: ToolchainOptions;
+  /** one line naming the stack ("Java 17 · Spring Boot 3.2 · Maven"), shown to the LLM roles; null when unrecognised */
+  readonly projectSummary?: string | null;
 }

@@ -1,271 +1,141 @@
 /**
- * Build Analyst role. The only role that isn't an LLM call — it detects
- * the project's toolchain from marker files and shells out to the
- * matching checker (reuses the `shell` tool from builtin.ts), then
- * normalizes the output into `Finding[]` so the rest of the pipeline
- * doesn't need to know this role is different.
+ * Build Analyst role. The only role that isn't an LLM call — it asks the
+ * toolchain registry (src/core/toolchains) what the project is built with,
+ * runs those checks, and normalizes the output into `Finding[]` so the rest
+ * of the pipeline doesn't need to know this role is different.
  *
- * Dispatch:
- *   tsconfig.json  → tsc
- *   go.mod         → go vet
- *   Cargo.toml     → cargo check
- *   pyproject.toml → mypy
+ * Detected (see planBuildTargets): tsconfig.json → tsc, pom.xml → mvn
+ * test-compile, build.gradle(.kts) → gradle classes testClasses, go.mod →
+ * go vet, Cargo.toml → cargo check, pyproject.toml → mypy. A build command
+ * in settings (`toolchain.build`) replaces detection, which is how any
+ * other language or setup is covered.
  *
  * Polyglot repos can trip more than one marker — we run all of them and
  * pool the findings. Resolver gives Build failures their own weight
  * (0.4), separate from BA/Architect/Dev/QA/PM.
  *
- * Fallback for buildless JS projects: without any of the four markers
- * this used to just pass with no real check. Now it runs `node --check`
- * against the changed .js/.mjs/.cjs files (only what's in the diff, not
- * the whole repo). Syntax errors only, no type checking — a real TS
- * parser is out of scope here.
+ * A tool that is missing or cannot run here is reported as a medium
+ * "Could not run" finding (verdict flag), never as a silent pass and never
+ * as a code defect.
+ *
+ * Fallback for projects with no build configuration: the changed files are
+ * syntax-checked with each language's own checker (node --check, python
+ * compile, javac, ruby -c, php -l, bash -n, gofmt, cc) — see
+ * core/toolchains/syntax.ts. A file nothing can check is reported as not
+ * verified (flag), never passed silently.
  */
 
-import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { builtinTools } from '../../../tools/builtin.js';
-import type { Tool } from '../../../tools/registry.js';
+import {
+  planModules,
+  runSyntaxChecks,
+  runToolchainCommand,
+  stripBuildToolNoise,
+} from '../../../core/toolchains/index.js';
 import type { Finding, RoleOutput } from './roleContract.js';
 import type { RoleRunContext } from '../pipeline/roleRunContext.js';
 
-interface CompilerDiagnostic {
-  readonly file: string;
-  readonly line: number;
-  readonly severity: 'error' | 'warning';
-  readonly message: string;
-  readonly code?: string;
-}
+export {
+  parseCargoCheck,
+  parseGoVet,
+  parseJavac,
+  parseMaven,
+  parseMypy,
+  parseNodeCheck,
+  parseTsc,
+  parseJsonc,
+  resolveTscReferencedProjects,
+  findLocalTscBinary,
+} from '../../../core/toolchains/index.js';
 
-interface BuildTarget {
-  readonly marker: string;
-  readonly toolLabel: string;
-  readonly command: string;
-  readonly timeoutMs: number;
-  readonly parse: (output: string) => CompilerDiagnostic[];
-}
-
-export function parseTsc(output: string): CompilerDiagnostic[] {
-  const re = /^(.+?)\((\d+),(\d+)\):\s+(error|warning)\s+(TS\d+):\s*(.*)$/gm;
-  const results: CompilerDiagnostic[] = [];
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(output))) {
-    results.push({ file: m[1], line: parseInt(m[2], 10), severity: m[4] as 'error' | 'warning', message: m[6], code: m[5] });
-  }
-  return results;
-}
-
-export function parseGoVet(output: string): CompilerDiagnostic[] {
-  const re = /^(.+?):(\d+):(\d+):\s*(.*)$/gm;
-  const results: CompilerDiagnostic[] = [];
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(output))) {
-    if (m[1].startsWith('#')) continue; // package header lines from `go vet`, not a diagnostic
-    results.push({ file: m[1], line: parseInt(m[2], 10), severity: 'error', message: m[4] });
-  }
-  return results;
-}
-
-export function parseCargoCheck(output: string): CompilerDiagnostic[] {
-  const re = /^(.+?):(\d+):(\d+):\s*(error|warning)(\[[^\]]+\])?:\s*(.*)$/gm;
-  const results: CompilerDiagnostic[] = [];
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(output))) {
-    results.push({
-      file: m[1],
-      line: parseInt(m[2], 10),
-      severity: m[4] as 'error' | 'warning',
-      message: m[6],
-      ...(m[5] ? { code: m[5].slice(1, -1) } : {}),
-    });
-  }
-  return results;
-}
-
-export function parseMypy(output: string): CompilerDiagnostic[] {
-  const re = /^(.+?):(\d+)(?::\d+)?:\s*(error|warning):\s*(.*)$/gm;
-  const results: CompilerDiagnostic[] = [];
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(output))) {
-    let message = m[4];
-    let code: string | undefined;
-    const codeMatch = message.match(/\s\[([\w-]+)\]$/);
-    if (codeMatch) {
-      code = codeMatch[1];
-      message = message.slice(0, codeMatch.index).trim();
-    }
-    results.push({ file: m[1], line: parseInt(m[2], 10), severity: m[3] as 'error' | 'warning', message, ...(code ? { code } : {}) });
-  }
-  return results;
-}
-
-const JS_FALLBACK_EXTENSIONS: readonly string[] = ['.js', '.mjs', '.cjs'];
-
-// node --check doesn't print a single-line "file:line: message" like the
-// other tools — it dumps file:line, a caret pointer, then a SyntaxError
-// line — so this gets its own parser instead of reusing tsc/cargo's shape.
-export function parseNodeCheck(output: string, file: string): CompilerDiagnostic[] {
-  if (!output.trim()) return [];
-  const errorMatch = output.match(/^(\w*Error): (.*)$/m);
-  if (!errorMatch) return [];
-  const lineMatch = output.match(/:(\d+)$/m);
-  const line = lineMatch ? parseInt(lineMatch[1], 10) : 1;
-  return [{ file, line, severity: 'error', message: `${errorMatch[1]}: ${errorMatch[2]}` }];
-}
-
-// Returns null when there's no JS in the diff — caller falls back to a plain pass.
-async function runNodeSyntaxFallback(
+// Changed files no build covers: syntax-check them with each language's own checker
+// (core/toolchains/syntax.ts). Null when none of them is source code.
+async function runSyntaxFallback(
   ctx: RoleRunContext,
-  shell: Tool,
-): Promise<{ findings: Finding[]; toolSummary: string } | null> {
-  const jsFiles = ctx.diff.files
-    .filter((f) => f.status !== 'deleted')
-    .map((f) => f.path)
-    .filter((p) => JS_FALLBACK_EXTENSIONS.includes(path.extname(p)));
-
-  if (jsFiles.length === 0) return null;
+  changed: readonly string[],
+): Promise<{ findings: Finding[]; summary: string } | null> {
+  const report = await runSyntaxChecks(ctx.cwd, changed, { sandbox: ctx.toolchain?.sandbox });
+  if (!report) return null;
 
   const findings: Finding[] = [];
-  let errorCount = 0;
-
-  for (const file of jsFiles) {
-    const result = await shell.execute({ command: `node --check ${JSON.stringify(file)}`, timeout: 15_000 }, { cwd: ctx.cwd });
-    if (!result.isError) continue;
-
-    const output = typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
-    const diagnostics = parseNodeCheck(output, file);
-    errorCount++;
-    if (diagnostics.length > 0) {
-      const d = diagnostics[0];
-      findings.push({
-        id: `build-${findings.length + 1}`,
-        severity: 'high',
-        file: d.file,
-        lineStart: d.line,
-        lineEnd: d.line,
-        description: `node --check: ${d.message}`,
-      });
-    } else {
-      // node --check failed but the output didn't match the expected
-      // shape (e.g. node itself isn't on PATH) — flag it without
-      // claiming a specific line number we don't actually have.
-      findings.push({
-        id: `build-${findings.length + 1}`,
-        severity: 'medium',
-        file,
-        lineStart: 1,
-        lineEnd: 1,
-        description: `node --check reported a problem with ${file} but its output could not be parsed: ${(output.trim() || 'no output').slice(0, 200)}`,
-      });
-    }
+  const add = (f: Omit<Finding, 'id'>): void => {
+    findings.push({ id: `build-${findings.length + 1}`, ...f });
+  };
+  for (const d of report.diagnostics) {
+    add({
+      severity: d.severity === 'error' ? 'high' : 'medium',
+      file: d.file,
+      lineStart: d.line,
+      lineEnd: d.line,
+      description: `${d.label}: ${d.message}`,
+    });
+  }
+  for (const c of report.couldNotRun) {
+    add({
+      severity: 'medium',
+      file: c.files[0]!,
+      lineStart: 1,
+      lineEnd: 1,
+      description: `Could not run "${c.label}" on ${listFiles(c.files)}: ${c.reason}`,
+    });
+  }
+  if (report.unverified.length > 0) {
+    add({
+      severity: 'medium',
+      file: report.unverified[0]!,
+      lineStart: 1,
+      lineEnd: 1,
+      description:
+        `Could not run a syntax check on ${listFiles(report.unverified)}: there is no build configuration and no built-in checker for ` +
+        `${[...new Set(report.unverified.map((f) => path.extname(f)))].join(', ')} files — set toolchain.build in .codexrev/settings.json to check them.`,
+    });
   }
 
+  const parts = report.checks.map((c) => `${c.label}: ${c.errors} error(s) in ${c.files} file(s)`);
+  if (report.couldNotRun.length > 0)
+    parts.push(`could not run: ${report.couldNotRun.map((c) => c.label).join(', ')}`);
+  if (report.unverified.length > 0) parts.push(`not verified: ${report.unverified.length} file(s)`);
+  const notes = report.notes.length > 0 ? ` ${report.notes.join(' ')}` : '';
   return {
     findings,
-    toolSummary: `node --check (fallback — no tsconfig.json/go.mod/Cargo.toml/pyproject.toml found): ${errorCount} error(s) across ${jsFiles.length} JS file(s) in the diff`,
+    summary: `Syntax check of the changed files (fallback — no build configuration found): ${parts.join('; ')}.${notes}`,
   };
 }
 
-// tsconfig.json allows // and /* */ comments and trailing commas, which JSON.parse rejects
-export function parseJsonc(text: string): unknown {
-  let out = '';
-  let inString = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i]!;
-    if (inString) {
-      out += c;
-      if (c === '\\') out += text[++i] ?? '';
-      else if (c === '"') inString = false;
-      continue;
-    }
-    if (c === '"') {
-      inString = true;
-      out += c;
-    } else if (c === '/' && text[i + 1] === '/') {
-      while (i < text.length && text[i] !== '\n') i++;
-      out += '\n';
-    } else if (c === '/' && text[i + 1] === '*') {
-      i += 2;
-      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++;
-      i++;
-    } else {
-      out += c;
-    }
-  }
-  return JSON.parse(out.replace(/,(\s*[}\]])/g, '$1'));
+function listFiles(files: readonly string[]): string {
+  return files.length <= 3
+    ? files.join(', ')
+    : `${files.slice(0, 3).join(', ')} and ${files.length - 3} more`;
 }
 
-// A "solution-style" tsconfig (Vite/React templates, monorepos) has `files: []` plus
-// `references`: it lists projects but includes no source itself, so a plain
-// `tsc --noEmit` against it checks ZERO files and "passes". Check each referenced
-// project directly instead. Returns [] when tsconfig.json is a normal project.
-export async function resolveTscReferencedProjects(cwd: string): Promise<string[]> {
-  let cfg: { files?: unknown; references?: unknown };
-  try {
-    cfg = parseJsonc(await fs.readFile(path.join(cwd, 'tsconfig.json'), 'utf-8')) as typeof cfg;
-  } catch {
-    return [];
-  }
-  if (!Array.isArray(cfg.references) || cfg.references.length === 0) return [];
-  if (!(Array.isArray(cfg.files) && cfg.files.length === 0)) return []; // has its own sources — plain check is meaningful
-  const projects: string[] = [];
-  for (const ref of cfg.references as Array<{ path?: unknown }>) {
-    if (typeof ref?.path !== 'string') continue;
-    const p = ref.path.endsWith('.json') ? ref.path : path.join(ref.path, 'tsconfig.json');
-    if (await fileExists(path.join(cwd, p))) projects.push(p);
-  }
-  return projects;
-}
-
-// The shell tool runs commands inside the OS sandbox (macOS seatbelt), which denies
-// fork(): `npx --no-install tsc` spawns a child and dies with exit 255 and no output,
-// so on macOS the old command made Build report "could not run" for EVERY project.
-// Calling the project's own tsc binary directly needs no fork. Searches upward so a
-// hoisted monorepo install (node_modules at the workspace root) is found too.
-export async function findLocalTscBinary(cwd: string): Promise<string | null> {
-  let dir = path.resolve(cwd);
-  for (;;) {
-    const candidate = path.join(dir, 'node_modules', '.bin', 'tsc');
-    if (await fileExists(candidate)) return candidate;
-    const parent = path.dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
-  }
-}
-
-const TARGETS: readonly BuildTarget[] = [
-  { marker: 'tsconfig.json', toolLabel: 'tsc', command: 'npx --no-install tsc --noEmit --pretty false', timeoutMs: 120_000, parse: parseTsc },
-  { marker: 'go.mod', toolLabel: 'go vet', command: 'go vet ./...', timeoutMs: 120_000, parse: parseGoVet },
-  { marker: 'Cargo.toml', toolLabel: 'cargo check', command: 'cargo check --message-format=short', timeoutMs: 180_000, parse: parseCargoCheck },
-  { marker: 'pyproject.toml', toolLabel: 'mypy', command: 'mypy .', timeoutMs: 120_000, parse: parseMypy },
-];
-
-async function fileExists(p: string): Promise<boolean> {
-  try {
-    await fs.access(p);
-    return true;
-  } catch {
-    return false;
-  }
-}
+const outputTail = (output: string): string =>
+  (stripBuildToolNoise(output) || output.trim() || 'command failed with no output').slice(-600);
 
 export async function runBuildRole(ctx: RoleRunContext): Promise<RoleOutput> {
-  const detected: BuildTarget[] = [];
-  for (const target of TARGETS) {
-    if (await fileExists(path.join(ctx.cwd, target.marker))) detected.push(target);
-  }
+  // each changed file is checked by the build of the module it belongs to (core/toolchains/modules.ts);
+  // deleted files still pick their module (deleting a class can break the build) but are not syntax-checked
+  const deleted = new Set(ctx.diff.files.filter((f) => f.status === 'deleted').map((f) => f.path));
+  const plan = await planModules(
+    ctx.cwd,
+    ctx.diff.files.map((f) => f.path),
+    ctx.toolchain,
+  );
+  const leftover = plan.uncovered.filter((f) => !deleted.has(f));
+  const fallback = leftover.length > 0 ? await runSyntaxFallback(ctx, leftover) : null;
+  const targetCount = plan.modules.reduce((n, m) => n + m.targets.length, 0);
 
-  const shell = builtinTools().find((t) => t.name === 'shell');
-
-  if (detected.length === 0) {
-    const fallback = shell ? await runNodeSyntaxFallback(ctx, shell) : null;
+  if (targetCount === 0) {
     if (fallback) {
-      const hasErrors = fallback.findings.some((f) => f.severity === 'high');
+      const verdict = fallback.findings.some((f) => f.severity === 'high')
+        ? 'block'
+        : fallback.findings.length > 0
+          ? 'flag'
+          : 'pass';
       return {
         role: 'build',
-        verdict: hasErrors ? 'block' : 'pass',
+        verdict,
         findings: fallback.findings,
-        summary: fallback.toolSummary,
+        summary: fallback.summary,
         confidence: 1,
       };
     }
@@ -274,26 +144,7 @@ export async function runBuildRole(ctx: RoleRunContext): Promise<RoleOutput> {
       verdict: 'pass',
       findings: [],
       summary:
-        'No recognized build configuration found (tsconfig.json, go.mod, Cargo.toml, pyproject.toml), and no JS files in this diff to syntax-check — nothing for the Build role to check.',
-      confidence: 1,
-    };
-  }
-
-  if (!shell) {
-    return {
-      role: 'build',
-      verdict: 'flag',
-      findings: [
-        {
-          id: 'build-0',
-          severity: 'medium',
-          file: '.',
-          lineStart: 1,
-          lineEnd: 1,
-          description: 'Internal error: the shell tool is unavailable, so the Build role could not run any compiler checks.',
-        },
-      ],
-      summary: 'Build role could not run — shell tool unavailable.',
+        'No recognized build configuration found (tsconfig.json, pom.xml, build.gradle, go.mod, Cargo.toml, pyproject.toml, or toolchain.build in settings), and no source files in this diff to syntax-check — nothing for the Build role to check.',
       confidence: 1,
     };
   }
@@ -301,90 +152,116 @@ export async function runBuildRole(ctx: RoleRunContext): Promise<RoleOutput> {
   const findings: Finding[] = [];
   const toolSummaries: string[] = [];
   let sawExecFailure = false;
+  const couldNotRun = (target: { label: string; marker: string }, why: string): void => {
+    sawExecFailure = true;
+    findings.push({
+      id: `build-${findings.length + 1}`,
+      severity: 'medium',
+      file: target.marker,
+      lineStart: 1,
+      lineEnd: 1,
+      description: `Could not run "${target.label}" in this environment: ${why}`,
+    });
+  };
 
-  for (const target of detected) {
-    // one command per target, except a solution-style tsconfig which needs one per referenced project
-    let baseCommand = target.command;
-    if (target.marker === 'tsconfig.json') {
-      const tsc = await findLocalTscBinary(ctx.cwd);
-      if (!tsc) {
-        sawExecFailure = true;
-        findings.push({
-          id: `build-${findings.length + 1}`,
-          severity: 'medium',
-          file: target.marker,
-          lineStart: 1,
-          lineEnd: 1,
-          description: 'Could not run "tsc" in this environment: TypeScript is not installed in this project (no node_modules/.bin/tsc) — run your package manager\'s install, then re-run the review.',
-        });
-        toolSummaries.push(`${target.toolLabel}: could not run (TypeScript not installed)`);
-        continue;
-      }
-      baseCommand = `node ${JSON.stringify(tsc)} --noEmit --pretty false`;
-    }
-    const commands: string[] = [baseCommand];
-    let note = '';
-    if (target.marker === 'tsconfig.json') {
-      const projects = await resolveTscReferencedProjects(ctx.cwd);
-      if (projects.length > 0) {
-        commands.splice(0, commands.length, ...projects.map((p) => `${baseCommand} -p ${JSON.stringify(p)}`));
-        note = ` (solution-style tsconfig: checked ${projects.join(', ')})`;
-      }
-    }
-
-    let errorCount = 0;
-    let warnCount = 0;
-    let failedToRun = 0;
-    for (const command of commands) {
-      const result = await shell.execute({ command, timeout: target.timeoutMs }, { cwd: ctx.cwd });
-      const output = typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
-      const diagnostics = target.parse(output);
-
-      if (result.isError && diagnostics.length === 0) {
-        // The tool exited non-zero but produced nothing we recognize as a
-        // diagnostic — most likely it isn't installed / reachable in this
-        // environment. That's an infra gap, not evidence the code is broken.
-        sawExecFailure = true;
-        failedToRun++;
-        findings.push({
-          id: `build-${findings.length + 1}`,
-          severity: 'medium',
-          file: target.marker,
-          lineStart: 1,
-          lineEnd: 1,
-          description: `Could not run "${target.toolLabel}" in this environment: ${(output.trim() || 'command failed with no output').slice(0, 300)}${/Operation not permitted/i.test(output) ? ' (the OS sandbox blocked the command)' : ''}.`,
-        });
+  for (const module of plan.modules) {
+    const moduleCwd = path.join(ctx.cwd, module.dir);
+    // findings name repo-relative files, whichever module folder the tool ran in
+    const inRepo = (file: string): string =>
+      module.dir === '.' || path.isAbsolute(file) ? file : path.posix.join(module.dir, file);
+    for (const moduleTarget of module.targets) {
+      const target =
+        module.dir === '.'
+          ? moduleTarget
+          : {
+              ...moduleTarget,
+              label: `${moduleTarget.label} (${module.dir})`,
+              marker: inRepo(moduleTarget.marker),
+            };
+      if (target.unavailable) {
+        couldNotRun(target, target.unavailable);
+        toolSummaries.push(`${target.label}: could not run (not installed)`);
         continue;
       }
 
-      for (const d of diagnostics) {
-        findings.push({
-          id: `build-${findings.length + 1}`,
-          severity: d.severity === 'error' ? 'high' : 'medium',
-          file: d.file,
-          lineStart: d.line,
-          lineEnd: d.line,
-          description: d.code ? `${target.toolLabel} ${d.code}: ${d.message}` : `${target.toolLabel}: ${d.message}`,
+      let errorCount = 0;
+      let warnCount = 0;
+      let failedToRun = 0;
+      for (const command of target.commands) {
+        const result = await runToolchainCommand(command, moduleCwd, {
+          timeoutMs: target.timeoutMs,
+          sandbox: ctx.toolchain?.sandbox,
         });
+        const diagnostics = target
+          .parse(result.output, moduleCwd)
+          .map((d) => ({ ...d, file: inRepo(d.file) }));
+
+        if (result.timedOut) {
+          failedToRun++;
+          couldNotRun(
+            target,
+            `timed out after ${Math.round(target.timeoutMs / 1000)}s (set toolchain.buildTimeoutMs in settings to allow longer).`,
+          );
+          continue;
+        }
+        if (result.code !== 0 && diagnostics.length === 0) {
+          // The tool exited non-zero but produced nothing we recognize as a
+          // diagnostic — most likely it isn't installed / reachable here, or a
+          // dependency could not be downloaded. That's an infra gap, not
+          // evidence the code is broken.
+          failedToRun++;
+          couldNotRun(
+            target,
+            `${outputTail(result.output)}${/Operation not permitted/i.test(result.output) ? ' (the OS sandbox blocked the command)' : ''}.`,
+          );
+          continue;
+        }
+
+        for (const d of diagnostics) {
+          findings.push({
+            id: `build-${findings.length + 1}`,
+            severity: d.severity === 'error' ? 'high' : 'medium',
+            file: d.file,
+            lineStart: d.line,
+            lineEnd: d.line,
+            description: d.code
+              ? `${target.label} ${d.code}: ${d.message}`
+              : `${target.label}: ${d.message}`,
+          });
+        }
+        errorCount += diagnostics.filter((d) => d.severity === 'error').length;
+        warnCount += diagnostics.filter((d) => d.severity === 'warning').length;
       }
-      errorCount += diagnostics.filter((d) => d.severity === 'error').length;
-      warnCount += diagnostics.filter((d) => d.severity === 'warning').length;
+      toolSummaries.push(
+        failedToRun === target.commands.length
+          ? `${target.label}: could not run`
+          : `${target.label}: ${errorCount} error(s), ${warnCount} warning(s)${target.note ?? ''}`,
+      );
     }
-    toolSummaries.push(
-      failedToRun === commands.length
-        ? `${target.toolLabel}: could not run`
-        : `${target.toolLabel}: ${errorCount} error(s), ${warnCount} warning(s)${note}`,
-    );
   }
+  if (fallback) findings.push(...fallback.findings);
+  const numbered = findings.map((f, i) => ({ ...f, id: `build-${i + 1}` }));
+  const extra = [
+    ...(fallback ? [` ${fallback.summary}`] : []),
+    ...(plan.skipped.length > 0
+      ? [
+          ` ${plan.skipped.length} more module(s) not checked (limit reached): ${plan.skipped.join(', ')}.`,
+        ]
+      : []),
+  ].join('');
 
-  const hasErrors = findings.some((f) => f.severity === 'high');
-  const verdict: RoleOutput['verdict'] = hasErrors ? 'block' : sawExecFailure || findings.length > 0 ? 'flag' : 'pass';
+  const hasErrors = numbered.some((f) => f.severity === 'high');
+  const verdict: RoleOutput['verdict'] = hasErrors
+    ? 'block'
+    : sawExecFailure || numbered.length > 0
+      ? 'flag'
+      : 'pass';
 
   return {
     role: 'build',
     verdict,
-    findings,
-    summary: `Ran ${detected.length} build check(s): ${toolSummaries.join('; ')}.`,
+    findings: numbered,
+    summary: `Ran ${targetCount} build check(s): ${toolSummaries.join('; ')}.${extra}`,
     confidence: 1,
   };
 }

@@ -5,6 +5,7 @@
 // Continue/Details/Skip/Abort gate after each role. Non-interactive (CI,
 // --print) just runs straight through.
 
+import { describeChange, type ToolchainOptions } from '../../../core/toolchains/index.js';
 import { ROLE_LABELS, ROLE_ORDER, type RoleId, type RoleOutput } from '../roles/roleContract.js';
 import { runBaRole } from '../roles/ba.js';
 import { runArchitectRole } from '../roles/architect.js';
@@ -40,6 +41,7 @@ export interface RunPipelineOptions {
   readonly cwd: string;
   readonly verification?: VerificationContext; // set only by the --fix loop's final verification pass
   readonly cache?: RoleCache; // reuse identical judgements of identical code (see reviewCache.ts)
+  readonly toolchain?: ToolchainOptions; // settings `toolchain` + sandbox permission, for the Build role
   readonly interaction?: InteractionChannel; // omit for non-interactive (CI/--print), runs straight through
   readonly onRoleStart?: (role: RoleId) => void; // fires right before a role's LLM call (or Build's shell-out) so the CLI can show a spinner
   // fires right after a role finishes, awaited before moving on — CLI uses this to print the
@@ -70,6 +72,7 @@ export async function runPipeline(opts: RunPipelineOptions): Promise<PipelineRun
   const aggregator = new ContextAggregator(opts.diff, opts.urs);
   const ranRoles: RoleId[] = [];
   const timings: Partial<Record<RoleId, RoleTiming>> = {};
+  const projectSummary = await describeChange(opts.cwd, opts.diff.files.map((f) => f.path)).catch(() => null);
 
   for (let i = 0; i < ROLE_ORDER.length; i++) {
     const role = ROLE_ORDER[i];
@@ -84,6 +87,8 @@ export async function runPipeline(opts: RunPipelineOptions): Promise<PipelineRun
       verification: opts.verification,
       metrics,
       cache: opts.cache,
+      toolchain: opts.toolchain,
+      projectSummary,
     };
 
     opts.onRoleStart?.(role);

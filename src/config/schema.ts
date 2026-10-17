@@ -10,6 +10,7 @@ import { PROVIDER_IDS, providerMeta } from '../providers/registry.js';
 import type { InteractionMode } from '../core/modes.js';
 import type { VerificationMode } from '../core/verification.js';
 import { ConfigError } from '../utils/errors.js';
+import type { ToolchainOverride } from '../core/toolchains/registry.js';
 
 export type SandboxMode = 'auto' | 'seatbelt' | 'docker' | 'podman' | 'off';
 export type ThemeName = 'dark' | 'light' | 'solarized' | 'monokai' | 'nord';
@@ -83,6 +84,19 @@ export interface ReviewPipelineSettings {
   failOn?: 'request_changes' | 'block';
 }
 
+// settings `toolchain`: optional explicit commands for a project whose build/test setup isn't
+// detected (or is detected wrongly). Any string is accepted — it runs in the project root.
+export function validateToolchainSettings(t: ToolchainOverride | undefined): void {
+  if (t === undefined) return;
+  if (typeof t !== 'object' || t === null) throw new ConfigError('toolchain must be an object like { "build": "...", "test": "..." }.');
+  for (const key of ['build', 'test'] as const) {
+    if (t[key] !== undefined && (typeof t[key] !== 'string' || !t[key]!.trim())) throw new ConfigError(`toolchain.${key} must be a non-empty command string.`);
+  }
+  for (const key of ['buildTimeoutMs', 'testTimeoutMs'] as const) {
+    if (t[key] !== undefined && (!Number.isFinite(t[key]) || t[key]! < 1000)) throw new ConfigError(`toolchain.${key} must be at least 1000 (milliseconds).`);
+  }
+}
+
 // never exceed 5 Breaker-Builder iterations, per the proposal's NFRs
 export const MAX_FIX_ITERATIONS_CEILING = 5;
 
@@ -133,6 +147,12 @@ export interface Settings {
   bypassApprovals: boolean;
   defaultMode: InteractionMode;
   maxFixAttempts: number; // agent-mode fix loop cap
+  /**
+   * Build/test commands for projects that are not detected automatically (or detected wrongly), e.g.
+   * { "build": "./mvnw -B -q -pl api -am test-compile", "test": "make check", "testTimeoutMs": 900000 }.
+   * Used by the review pipeline's Build role, its --fix validation, and the agent's test verification.
+   */
+  toolchain?: ToolchainOverride;
   verificationMode: VerificationMode;
   metadata: Record<string, unknown>; // machine-local, not synced anywhere
   reviewPipeline: ReviewPipelineSettings;
