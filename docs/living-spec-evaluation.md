@@ -117,7 +117,7 @@ scenarios × 3 modes = 42 runs). Numbers vary slightly per machine; the JSON rep
 
 ## 6. Test inventory
 
-`tests/features/living-spec/` — **28 files, 253 tests, all green** (`npm test`).
+`tests/features/living-spec/` — **29 files, 262 tests, all green** (`npm test`).
 
 | Test file | Tests | Covers |
 | --- | --- | --- |
@@ -132,6 +132,7 @@ scenarios × 3 modes = 42 runs). Numbers vary slightly per machine; the JSON rep
 | `ursPatcher.test.ts` | 15 | scoped patch generation/apply, validatePatch (SO4) |
 | `versionStore.test.ts` | 3 | version snapshots + traceability (NFR7) |
 | `pdfRenderer.test.ts` | 5 | hand-rolled PDF: xref byte accuracy, pagination, WinAnsi/escaping |
+| `reportHtml.test.ts` | 9 | interactive HTML artifact: naming, all details, XSS escaping, offline self-containment, CLI e2e |
 | `ursBootstrap.test.ts` | 11 | bootstrap scan/prompt/sanitisation, approval gate, dual-format v0 |
 | `contract.test.ts` | 3 | stable `SpecAnalysisResult` JSON round-trip, every field |
 | `registerSpecCommand.test.ts` | 11 | yargs flags incl. bootstrap/eval, help text |

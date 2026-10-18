@@ -184,10 +184,17 @@ persisted as authoritative.
 
 `analyze` extracts the diff from a git ref (default: staged changes) with `simple-git`
 and `parsePatch()`, runs every changed file through the debounce/dedupe buffer, derives a
-stable `changeId` (hash of ref + file list + diff content) and writes the result to
-`.codexrev/living-spec/reports/<changeId>.json`. `--dry-run` is **deterministic-only** —
-no model calls, nothing written; `--output json` prints the full `SpecAnalysisResult`
-(and nothing else on stdout); `--quiet` suppresses the progress output.
+stable `changeId` (hash of ref + file list + diff content) and writes TWO report artifacts
+per analysis: the machine contract `reports/<changeId>.json` plus an interactive, fully
+self-contained HTML twin for humans —
+`reports/analyze-<YYYYMMDD-HHMMSS>-<file>-<id8>.html` (e.g.
+`analyze-20261018-060851-greet-5e9beb9e.html`): sortable by timestamp, readable at a
+glance, opens from disk with no network (inline CSS/JS, dark-mode aware) and carries every
+report detail — files, implications, drift + URS patch/proposals, test deltas, impact
+summary, drift alerts, quality + any inference failure. `--dry-run` is
+**deterministic-only** — no model calls, nothing written; `--output json` prints the full
+`SpecAnalysisResult` (and nothing else on stdout); `--quiet` suppresses the progress
+output. Watch batches write the same JSON + HTML pair per analysed change.
 
 Extraction guarantees:
 
@@ -392,7 +399,9 @@ All state lives inside the *target* project (`.codexrev/living-spec/`, created o
   urs/                    living URS: urs.json + urs.md + urs.pdf, state.json
   versions/               versioned snapshots: vN.json + vN.pdf per approved version
   proposals/              accept/reject/defer proposals (one json per proposal)
-  reports/                analysis outputs (one json per changeId, <changeId>.implications.json)
+  reports/                analysis outputs: <changeId>.json (contract) +
+                          analyze-<date>-<time>-<file>-<id8>.html (interactive artifact),
+                          <changeId>.implications.json, eval-<ts>.json/.md
   reports/alerts.jsonl    append-only drift-alert log (one JSON object per line)
 ```
 
