@@ -193,7 +193,11 @@ async function analyzeCommand(flags: SpecCommandFlags, deps?: SpecCommandDeps): 
       if (outcome.extraction.truncated) printTruncationWarning(outcome.extraction);
       printAnalysisJson(result);
     } else if (!flags.quiet) {
-      printAnalysisSummary(outcome, { root, reportFile: pass.reportFile });
+      printAnalysisSummary(outcome, {
+        root,
+        reportFile: pass.reportFile,
+        htmlFile: pass.reportHtmlFile,
+      });
       if (pass.label) {
         console.log(
           `  ${pass.label.ok ? 'model' : 'model failed'}:    ${pass.label.model}${

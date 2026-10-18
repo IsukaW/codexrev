@@ -55,6 +55,7 @@ import {
   saveImplicationsReport,
   saveProposal,
   saveReport,
+  saveReportHtml,
 } from '../tools/stateStore.js';
 
 const EMPTY_URS: UrsDocument = {
@@ -101,6 +102,8 @@ export interface AnalysisPassResult {
   /** Evaluation label file contents (null when inference did not run). */
   readonly label: ImplicationsLabelFile | null;
   readonly reportFile: string | null;
+  /** Interactive HTML twin of the report (null on --dry-run). */
+  readonly reportHtmlFile: string | null;
   readonly labelFile: string | null;
 }
 
@@ -239,12 +242,14 @@ export async function runAnalysisPass(
 
   // ── Persistence (NFR4: nothing is authoritative before accept) ──────
   let reportFile: string | null = null;
+  let reportHtmlFile: string | null = null;
   let labelFile: string | null = null;
   if (!dryRun) {
     stage('persist');
     for (const p of proposals) await saveProposal(projectRoot, p);
     await appendDriftAlerts(projectRoot, driftAlerts);
     reportFile = await saveReport(projectRoot, result);
+    reportHtmlFile = await saveReportHtml(projectRoot, result);
     if (label) labelFile = await saveImplicationsReport(projectRoot, outcome.changeId, label);
   }
 
@@ -258,6 +263,7 @@ export async function runAnalysisPass(
     synthesis,
     label,
     reportFile,
+    reportHtmlFile,
     labelFile,
   };
 }

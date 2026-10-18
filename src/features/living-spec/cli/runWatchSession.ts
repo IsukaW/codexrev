@@ -155,7 +155,7 @@ export async function runWatchSession(options: WatchSessionOptions): Promise<voi
       if (output === 'json') {
         printAnalysisJson(pass.result);
       } else if (plainLines) {
-        printWatchBatchSummary(outcome, batch, pass.reportFile);
+        printWatchBatchSummary(outcome, batch, pass.reportFile, pass.reportHtmlFile);
         printOutputSideSummary(pass);
       }
       emit({

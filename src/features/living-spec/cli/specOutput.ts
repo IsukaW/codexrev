@@ -33,7 +33,7 @@ export function printTruncationWarning(extraction: ExtractedDiff): void {
 /** `--output text` summary: files changed, lines added/removed, warnings. */
 export function printAnalysisSummary(
   outcome: AnalysisOutcome,
-  opts: { root: string; reportFile: string | null },
+  opts: { root: string; reportFile: string | null; htmlFile?: string | null },
 ): void {
   for (const line of renderAnalyzeHeader({
     extraction: outcome.extraction,
@@ -43,6 +43,7 @@ export function printAnalysisSummary(
   })) {
     console.log(line);
   }
+  if (opts.htmlFile) console.log(`  html artifact:  ${opts.htmlFile}`);
   if (outcome.extraction.truncated) printTruncationWarning(outcome.extraction);
 }
 
@@ -61,6 +62,7 @@ export function printWatchBatchSummary(
   outcome: AnalysisOutcome,
   batch: ChangeBatch,
   reportFile: string | null,
+  htmlFile?: string | null,
 ): void {
   const stamp = new Date(batch.emittedAt).toTimeString().slice(0, 8);
   const { extraction } = outcome;
@@ -73,4 +75,5 @@ export function printWatchBatchSummary(
   );
   for (const file of extraction.files) console.log(renderFileLine(file));
   if (reportFile) console.log(`  report written: ${reportFile}`);
+  if (htmlFile) console.log(`  html artifact:  ${htmlFile}`);
 }

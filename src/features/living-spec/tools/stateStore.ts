@@ -23,6 +23,7 @@ import addFormatsDefault from 'ajv-formats';
 import type { FormatsPlugin } from 'ajv-formats';
 import { DEFAULT_DEBOUNCE_MS } from '../pipeline/changeBuffer.js';
 import type { ImplicationsLabelFile } from '../pipeline/inferenceEngine.js';
+import { reportHtmlFileName, renderAnalysisHtml } from './reportHtml.js';
 import {
   parseUrsDocument,
   renderUrsMarkdown,
@@ -438,6 +439,27 @@ export async function saveReport(
   const file = reportPath(projectRoot, result.changeId);
   await fs.mkdir(reportsDir(projectRoot), { recursive: true });
   await fs.writeFile(file, JSON.stringify(result, null, 2), 'utf-8');
+  return file;
+}
+
+/**
+ * Human-readable HTML artifact path for one analysis:
+ * `reports/analyze-<YYYYMMDD-HHMMSS>-<fileSlug>-<changeId8>.html` — one per
+ * analysis run, sortable by timestamp and readable at a glance (the JSON
+ * report keeps its stable `<changeId>.json` contract name).
+ */
+export function reportHtmlPath(projectRoot: string, result: SpecAnalysisResult): string {
+  return path.join(reportsDir(projectRoot), reportHtmlFileName(result));
+}
+
+/** Writes the interactive HTML twin of a report; returns its absolute path. */
+export async function saveReportHtml(
+  projectRoot: string,
+  result: SpecAnalysisResult,
+): Promise<string> {
+  const file = reportHtmlPath(projectRoot, result);
+  await fs.mkdir(reportsDir(projectRoot), { recursive: true });
+  await fs.writeFile(file, renderAnalysisHtml(result), 'utf-8');
   return file;
 }
 
